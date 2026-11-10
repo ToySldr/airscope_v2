@@ -244,17 +244,39 @@ class AirscopeApp(App):
         self.push_screen(PreferencesModal())
 
     async def action_quit(self):
+        """Quit: persist config, close adapters, release cards, exit.
+
+        Every cleanup step is wrapped in asyncio.wait_for with a timeout so
+        that a hung adapter close or a slow modprobe cycle can never prevent
+        self.exit() from being called.  This is the fix for the 'q key does
+        nothing' symptom: previously a blocking driver.close() on the USB
+        interface would stall action_quit forever.
+        """
         self.persist_config()
+        # 1) Close the WlanArray (stops driver loops, releases USB).
+        #    Bounded so a wedged USB interface can't block exit indefinitely.
         if self.array:
-            await self.array.close()
-        # Release any cards we handed to airscope (modprobe blocklist + udev rules) so they return
-        # to their normal kernel driver on the next replug, instead of staying "installed".
+            try:
+                await asyncio.wait_for(self.array.close(), timeout=15)
+            except asyncio.TimeoutError:
+                logger.warning("action_quit: array.close() timed out after 15s; forcing exit")
+            except Exception as exc:
+                logger.warning("action_quit: array.close() failed: %s", exc)
+        # 2) Release modprobe blacklists / udev rules (runs in a thread so
+        #    blocking subprocess.call(rmmod/modprobe) can't stall the loop).
         try:
             from airscope.setup.linux import release_all
-            await asyncio.to_thread(release_all)
+            await asyncio.wait_for(asyncio.to_thread(release_all), timeout=30)
+        except asyncio.TimeoutError:
+            logger.warning("action_quit: release_all() timed out after 30s; forcing exit")
         except Exception as exc:  # teardown must never prevent exit
-            logger.warning("Failed to release wireless cards on exit: %s", exc)
-        _restore_wireless_interfaces()
+            logger.warning("action_quit: release_all() failed: %s", exc)
+        # 3) Restore any interfaces left in monitor mode back to managed.
+        try:
+            _restore_wireless_interfaces()
+        except Exception as exc:
+            logger.warning("action_quit: _restore_wireless_interfaces() failed: %s", exc)
+        # 4) Exit — always reached, even if every cleanup step above failed.
         self.exit()
 
 
