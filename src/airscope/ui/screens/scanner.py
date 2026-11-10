@@ -244,9 +244,9 @@ class ScannerView(Screen):
         Binding("o", "toggle_sort_dir", "Sort Asc/Desc", show=False),
         Binding("home", "scroll_home", "Top", show=False, priority=True),
         Binding("end", "scroll_end", "Bottom", show=False, priority=True),
-        Binding("space", "toggle_mark", "Mark", show=False),
-        Binding("b", "batch_marked", "Batch", show=False),
-        Binding("B", "batch_stop", "Stop batch", show=False),
+        Binding("space", "toggle_mark", "Mark", show=True),
+        Binding("b", "batch_marked", "Batch", show=True),
+        Binding("B", "batch_stop", "Stop batch", show=True),
     ]
 
     # (column_key, display_label). BEACONS removed.
