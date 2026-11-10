@@ -1,6 +1,9 @@
+import atexit
 import asyncio
 import logging
 import os
+import signal
+import subprocess
 import sys
 from textual import events, work
 from textual.app import App
@@ -134,6 +137,7 @@ class AirscopeApp(App):
         self.pbc_enabled: bool = True
         register_app_themes(self)
         self.theme = Config.theme
+        _register_cleanup()
 
     def on_text_selected(self, event: events.TextSelected) -> None:
         selected = self.screen.get_selected_text()
@@ -250,20 +254,82 @@ class AirscopeApp(App):
             await asyncio.to_thread(release_all)
         except Exception as exc:  # teardown must never prevent exit
             logger.warning("Failed to release wireless cards on exit: %s", exc)
+        _restore_wireless_interfaces()
         self.exit()
 
 
-    async def on_exit_app(self) -> None:
-        """Safety net: release wireless cards even when airscope exits via Ctrl+C,
-        SIGTERM, or any path that does not go through action_quit().  Idempotent --
-        if action_quit already cleaned up there is nothing left to remove, and
-        modprobe on an already-loaded module is a no-op.
-        """
+# ---------------------------------------------------------------------------
+# Wireless card cleanup safety net
+# ---------------------------------------------------------------------------
+#
+# Textual's _on_exit_app is an INTERNAL method that does NOT call user-defined
+# on_exit_app overrides. So a plain ``async def on_exit_app`` in AirscopeApp was
+# dead code — it never fired when airscope exited via Ctrl+C, SIGTERM, or any
+# path other than the 'q' keybinding.
+#
+# Instead we register a synchronous atexit handler + signal handlers that call
+# _restore_wireless_interfaces(). This runs even on abnormal exit paths and is
+# idempotent (release_all checks for conf files; interface restore skips
+# non-monitor interfaces).
+
+_CLEANUP_REGISTERED = False
+
+
+def _restore_wireless_interfaces() -> None:
+    """Best-effort: release blacklisted cards AND restore any monitor-mode
+    interfaces back to managed mode so they are immediately usable after airscope exits.
+
+    Called from action_quit (via the 'q' keybinding) and also registered as an
+    atexit + signal handler. Idempotent: release_all() is a no-op when no
+    airscope conf files exist, and interface restoration skips any iface that
+    isn't in monitor mode.
+    """
+    # 1) Remove modprobe blacklists / udev rules installed by airscope setup.
+    try:
+        from airscope.setup.linux import release_all
+        release_all()
+    except Exception as exc:  # never let cleanup prevent exit
+        logger.warning("_restore_wireless_interfaces: release_all failed: %s", exc)
+
+    # 2) Restore any monitor-mode interface back to managed mode.
+    try:
+        result = subprocess.run(
+            ["iw", "dev"], capture_output=True, text=True,
+            timeout=5, check=False)
+        for line in result.stdout.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Interface ") and len(stripped.split()) >= 2:
+                iface_name = stripped.split()[1]
+                info = subprocess.run(
+                    ["iw", "dev", iface_name, "info"],
+                    capture_output=True, text=True,
+                    timeout=3, check=False)
+                if "type monitor" in info.stdout:
+                    logger.info("Restoring %s from monitor to managed mode.",
+                                  iface_name)
+                    subprocess.run(
+                        f"ip link set {iface_name} down && iw dev {iface_name} \
+set type managed && ip link set {iface_name} up",
+                        shell=True, timeout=5, check=False)
+    except Exception as exc:
+        logger.warning("_restore_wireless_interfaces: interface restore failed: %s",
+                      exc)
+
+
+def _register_cleanup() -> None:
+    """Register the wireless-card cleanup handler with atexit and signal handlers.
+    Idempotent — safe to call multiple times."""
+    global _CLEANUP_REGISTERED
+    if _CLEANUP_REGISTERED:
+        return
+    _CLEANUP_REGISTERED = True
+    atexit.register(_restore_wireless_interfaces)
+    for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            from airscope.setup.linux import release_all
-            await asyncio.to_thread(release_all)
-        except Exception as exc:
-            logger.warning("on_exit_app: failed to release wireless cards: %s", exc)
+            signal.signal(sig, lambda *_: (_restore_wireless_interfaces(),
+                                          sys.exit(0)))
+        except (ValueError, OSError):
+            pass  # not in main thread or signal unsupported
 
 _FILE_LOGGING_CONFIGURED = False  # Avoid duplicate loggers
 

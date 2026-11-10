@@ -14,9 +14,12 @@ from airscope.models import CaptureType, PersistedCapture
 from airscope.persist.common import (
     AGGREGATED_HC22000_RE,
     LEGACY_CAPTURE_RE,
+    V14_AGGREGATED_HC22000_RE,
+    V14_CAPTURE_RE,
     WEP_KEY_HEX_RE,
     WPS_PIN_RE,
     WPS_PSK_RE,
+    _v14_bssid_to_colon,
     bssid_to_colon,
 )
 from airscope.persist.config import Config
@@ -122,13 +125,52 @@ def _parse_aggregate_hc(path: Path, bssid: str) -> List[PersistedCapture]:
     return out
 
 
+def _parse_aggregate_hc_v14(path: Path, bssid: str) -> List[PersistedCapture]:
+    """Parse a v14.py aggregated hc22000 file (BSSID as 12 hex chars without dashes)."""
+    text = _read_text(path)
+    if text is None:
+        return []
+    try:
+        mtime = int(path.stat().st_mtime)
+    except OSError:
+        mtime = 0
+    m = V14_AGGREGATED_HC22000_RE.match(path.name)
+    ssid = m.group("ssid") if m else None
+    pmkid = hs = 0
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("WPA*01*"):
+            pmkid += 1
+        elif line.startswith("WPA*02*"):
+            hs += 1
+    out: List[PersistedCapture] = []
+    if pmkid:
+        out.append(PersistedCapture(type=CaptureType.PMKID, timestamp=mtime, path=str(path),
+                                    bssid=bssid, ssid=ssid, record_count=pmkid))
+    if hs:
+        out.append(PersistedCapture(type=CaptureType.HS, timestamp=mtime, path=str(path),
+                                    bssid=bssid, ssid=ssid, record_count=hs))
+    return out
+
+
 def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
     """Parse one captures/ file into zero or more PersistedCapture entries."""
+    # airscope aggregated hc22000 (dashed BSSID)
     if AGGREGATED_HC22000_RE.match(path.name):
         return _parse_aggregate_hc(path, bssid)
 
     m = LEGACY_CAPTURE_RE.match(path.name)
     if not m:
+        # v14.py format (BSSID as 12 hex chars without dashes + timestamp.seq)
+        m_v14 = V14_CAPTURE_RE.match(path.name)
+        if m_v14:
+            ssid_raw = path.name[:m_v14.start("bssid") - 1]  # strip trailing _
+            return [PersistedCapture(type=CaptureType.HS, timestamp=0,
+                                     path=str(path), bssid=bssid, ssid=ssid_raw or None,
+                                     record_count=0)]
+        # v14.py aggregated hc22000 (BSSID as 12 hex chars without dashes)
+        if V14_AGGREGATED_HC22000_RE.match(path.name):
+            return _parse_aggregate_hc_v14(path, bssid)
         return []
     epoch = int(m.group("epoch"))
     kind = m.group("kind")
@@ -181,14 +223,28 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     for path in root.rglob("*"):
         if not path.is_file():
             continue
+        # airscope native format (dashed BSSID + epoch + kind suffix)
         m = LEGACY_CAPTURE_RE.match(path.name)
         if m:
             bssid = bssid_to_colon(m.group("bssid"))
             index[bssid].extend(_parse_file(path, bssid))
             continue
+        # airscope aggregated hc22000 (dashed BSSID, no epoch/kind)
         m_agg = AGGREGATED_HC22000_RE.match(path.name)
         if m_agg:
             bssid = bssid_to_colon(m_agg.group("bssid"))
+            index[bssid].extend(_parse_file(path, bssid))
+            continue
+        # v14.py format (BSSID as 12 hex chars without dashes + timestamp.seq)
+        m_v14 = V14_CAPTURE_RE.match(path.name)
+        if m_v14:
+            bssid = _v14_bssid_to_colon(m_v14.group("bssid"))
+            index[bssid].extend(_parse_file(path, bssid))
+            continue
+        # v14.py aggregated hc22000 (BSSID as 12 hex chars without dashes)
+        m_v14_agg = V14_AGGREGATED_HC22000_RE.match(path.name)
+        if m_v14_agg:
+            bssid = _v14_bssid_to_colon(m_v14_agg.group("bssid"))
             index[bssid].extend(_parse_file(path, bssid))
     for caps in index.values():
         caps.sort(key=lambda c: c.timestamp, reverse=True)
