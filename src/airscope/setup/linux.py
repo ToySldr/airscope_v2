@@ -42,6 +42,8 @@ from airscope.setup.base import Prompter, Setup, SetupResult
 logger = logging.getLogger(__name__)
 
 RULE_DIR = "/etc/udev/rules.d"
+# Use /etc/modprobe.d for per-chipset blacklist configs.
+# These persist across reboots to keep kernel drivers from binding.
 BLACKLIST_DIR = "/etc/modprobe.d"
 
 # Sysfs USB tree: a module constant so tests can repoint it at a fixture.
@@ -324,6 +326,40 @@ def _stage(name: str, text: str | None) -> str | None:
 # uninstall that clears the whole family. Only ever our own ``airscope-*`` files are read or deleted.
 
 _CONF_PREFIX = "airscope-"
+
+
+def release_all() -> list[SetupResult]:
+    """Silently reverse every airscope rule/blacklist pair currently installed.
+
+    Called from :meth:`AirscopeApp.action_quit` so a wireless card handed to airscope returns
+    to its normal kernel driver on the next replug instead of staying "installed" after the
+    program exits (the modprobe blocklist + udev rule would otherwise keep the card from ever
+    binding its regular netdev again).
+
+    Wide removal: *every* installed ``airscope-*`` pair is deleted, so chipsets that share a
+    kernel module -- e.g. two rtl88xxau cards -- all get freed rather than leaving one still
+    blocked by the other's leftover conf.
+
+    Best-effort per chipset: a failure removing one never blocks exit or masks another. Only ever
+    touches our own ``airscope-*`` files, so unrelated modprobe/udev config is untouched.
+    """
+    results = []
+    if not sys.platform.startswith("linux"):
+        return results
+
+    conf_dir = Path(BLACKLIST_DIR)
+    if not conf_dir.exists():
+        return results
+
+    for conf in sorted(conf_dir.glob(f"{_CONF_PREFIX}*.conf")):
+        # 'airscope-<key>.conf' -> <key> (re-sanitized so it matches what remove_rule writes).
+        key = _safe(conf.stem[len(_CONF_PREFIX):])
+        target = SetupTarget(key=key, description="", ids=(), module_hints=())
+        try:
+            results.append(remove_rule(target))
+        except Exception as exc:  # never let one chipset abort shutdown
+            logger.warning("release_all: failed to remove rules for %s: %s", key, exc)
+    return results
 _CONF_SUFFIX = ".conf"
 _HANDS_RE = re.compile(r"# airscope hands (.+) \(([^)]+)\) to userland")
 
