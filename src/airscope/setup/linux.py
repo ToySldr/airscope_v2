@@ -351,14 +351,47 @@ def release_all() -> list[SetupResult]:
     if not conf_dir.exists():
         return results
 
+    # Collect every module name from all installed airscope confs *before*
+    # we delete them, so we can reload the kernel drivers after removal.
+    # Without this step the USB adapters stay invisible until a physical
+    # replug or reboot — release_all removed the blacklist but never told
+    # the kernel to load the driver back into memory.
+    modules_to_reload: list[str] = []
+    seen_modules: set[str] = set()
+
     for conf in sorted(conf_dir.glob(f"{_CONF_PREFIX}*.conf")):
-        # 'airscope-<key>.conf' -> <key> (re-sanitized so it matches what remove_rule writes).
         key = _safe(conf.stem[len(_CONF_PREFIX):])
         target = SetupTarget(key=key, description="", ids=(), module_hints=())
+        # Read modules before remove_rule deletes the file.
+        try:
+            for m in modules_in_conf(conf):
+                if m not in seen_modules and m not in _NEVER_BLACKLIST:
+                    seen_modules.add(m)
+                    modules_to_reload.append(m)
+        except Exception as exc:
+            logger.warning("release_all: could not read modules from %s: %s", conf, exc)
         try:
             results.append(remove_rule(target))
         except Exception as exc:  # never let one chipset abort shutdown
             logger.warning("release_all: failed to remove rules for %s: %s", key, exc)
+
+    # Reload kernel modules so the freed adapters become visible immediately,
+    # without requiring a physical replug or reboot.  Best-effort: failures are
+    # logged but never prevent exit (the blacklist files are already gone).
+    if modules_to_reload:
+        for m in modules_to_reload:
+            try:
+                rc = subprocess.call(["modprobe", m], timeout=15)
+                if rc == 0:
+                    logger.info("release_all: reloaded kernel module %s", m)
+                else:
+                    logger.warning(
+                        "release_all: modprobe %s exited with code %d; replug the adapter.",
+                        m, rc,
+                    )
+            except Exception as exc:
+                logger.warning("release_all: failed to reload %s: %s", m, exc)
+
     return results
 _CONF_SUFFIX = ".conf"
 _HANDS_RE = re.compile(r"# airscope hands (.+) \(([^)]+)\) to userland")

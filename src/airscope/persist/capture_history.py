@@ -175,7 +175,10 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     root = Path(Config.captures_dir)
     if not root.is_dir():
         return {}
-    for path in root.iterdir():
+    # Use rglob so captures stored by v14.py in per-AP subdirectories
+    # (e.g. SSID_BSSID/SSID_BSSID_timestamp_handshake.pcap) are also found,
+    # not just airscope's own flat-layout files at the top level.
+    for path in root.rglob("*"):
         if not path.is_file():
             continue
         m = LEGACY_CAPTURE_RE.match(path.name)
