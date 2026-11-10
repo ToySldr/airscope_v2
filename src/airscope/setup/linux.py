@@ -378,19 +378,34 @@ def release_all() -> list[SetupResult]:
     # Reload kernel modules so the freed adapters become visible immediately,
     # without requiring a physical replug or reboot.  Best-effort: failures are
     # logged but never prevent exit (the blacklist files are already gone).
+    #
+    # We do an rmmod + modprobe cycle rather than just `modprobe` because a prior
+    # airscope session may have removed the driver while USB devices were still
+    # connected; in that state simply loading the module does NOT trigger device
+    # rebinding.  Removing then reloading forces the kernel to scan for and bind
+    # the now-unblacklisted adapters.
+    #
+    # Some conf files list alias names (e.g. rtl88XXau) alongside the real
+    # DKMS module name (88XXau).  We try both; rmmod on a non-existent module is
+    # harmlessly ignored, and we only warn when *neither* form can be loaded.
     if modules_to_reload:
         for m in modules_to_reload:
-            try:
-                rc = subprocess.call(["modprobe", m], timeout=15)
+            # Derive the bare name (strip "rtl" prefix) as an alias fallback.
+            bare = m[3:] if m.startswith("rtl") and len(m) > 6 else None
+            candidates = [m] + ([bare] if bare and bare != m else [])
+            loaded_any = False
+            for cand in candidates:
+                subprocess.call(["rmmod", cand], timeout=10)  # ignore errors
+                rc = subprocess.call(["modprobe", cand], timeout=15)
                 if rc == 0:
-                    logger.info("release_all: reloaded kernel module %s", m)
-                else:
-                    logger.warning(
-                        "release_all: modprobe %s exited with code %d; replug the adapter.",
-                        m, rc,
-                    )
-            except Exception as exc:
-                logger.warning("release_all: failed to reload %s: %s", m, exc)
+                    logger.info("release_all: reloaded kernel module %s", cand)
+                    loaded_any = True
+                    break  # this chipset is handled; stop trying aliases
+            if not loaded_any:
+                logger.warning(
+                    "release_all: could not load any of %s for adapter; replug it.",
+                    candidates,
+                )
 
     return results
 _CONF_SUFFIX = ".conf"
