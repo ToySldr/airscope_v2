@@ -18,6 +18,10 @@
   <img src="https://img.shields.io/badge/pure-Python-orange" alt="Pure Python">
 </p>
 
+<p align="center">
+  <a href="docs/STORY.md"><strong>The story behind airscope</strong></a> — why it exists, how it works, what it can't do. Written by hand, not by committee.
+</p>
+
 ---
 
 ## Table of Contents
@@ -618,6 +622,8 @@ airscope/
 - [docs/SUPPORTED-HARDWARE.md](docs/SUPPORTED-HARDWARE.md) — hardware compatibility & grading
 - [docs/FIRMWARE.md](docs/FIRMWARE.md) — firmware loading
 - [docs/ACKS.md](docs/ACKS.md) — ACK/retry architecture
+- [docs/STORY.md](docs/STORY.md) — the handwritten story: why, how, and what it can't do
+- [docs/airscope-research-paper.pdf](docs/airscope-research-paper.pdf) — research-paper PDF (format: MDPI-style technical report)
 - [docs/THEMES.md](docs/THEMES.md) — theme customization
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, PR guidelines
 - [Landing page](https://udhaybhat00.github.io/airscope/) — feature overview and downloads (GitHub Pages)
