@@ -318,16 +318,38 @@ set type managed && ip link set {iface_name} up",
 
 def _register_cleanup() -> None:
     """Register the wireless-card cleanup handler with atexit and signal handlers.
-    Idempotent — safe to call multiple times."""
+
+    SIGINT is intentionally NOT installed here. In Textual 8.x (app.py line 463),
+    Ctrl+C is bound to ``action_help_quit`` which shows a notification telling the
+    user to press 'q'. Calling ``sys.exit(0)`` from our own SIGINT handler fires
+    *during* Textual's event-loop processing and raises SystemExit mid-message-pump,
+    corrupting the queue so that pressing 'q' afterward does nothing — exactly the
+    "can't exit airscope" symptom reported in production.
+
+    Instead: let Textual handle Ctrl+C via its own key binding → user presses 'q'
+    → ``action_quit()`` runs (``_restore_wireless_interfaces()`` + ``self.exit()``).
+    The atexit handler below covers abnormal exits as a safety net. SIGTERM/SIGHUP
+    (non-interactive kills) still get cleanup but without sys.exit, so the event loop
+    stays in control.
+    """
     global _CLEANUP_REGISTERED
     if _CLEANUP_REGISTERED:
         return
     _CLEANUP_REGISTERED = True
     atexit.register(_restore_wireless_interfaces)
-    for sig in (signal.SIGTERM, signal.SIGINT):
+
+    def _handle_termination(signum, frame):
+        """Run cleanup for non-interactive signals (SIGTERM/SIGHUP).
+
+        Does NOT call sys.exit — Textual's event loop must remain in control so that
+        graceful shutdown via action_quit can complete normally.
+        """
+        _restore_wireless_interfaces()
+
+    # SIGINT excluded: see docstring above. Only SIGTERM + SIGHUP here.
+    for sig in (signal.SIGTERM, signal.SIGHUP):
         try:
-            signal.signal(sig, lambda *_: (_restore_wireless_interfaces(),
-                                          sys.exit(0)))
+            signal.signal(sig, _handle_termination)
         except (ValueError, OSError):
             pass  # not in main thread or signal unsupported
 
