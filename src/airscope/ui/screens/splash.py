@@ -214,6 +214,14 @@ class SplashView(Screen):
         self._is_initializing = False
         self._devices = []
 
+    def on_key(self, event: events.Key) -> None:
+        """Catch 'q' before the binding system can swallow it."""
+        if event.key == "q":
+            event.stop()
+            event.prevent_default()
+            print("[splash] on_key: 'q' pressed, quitting", flush=True)
+            self.app.run_worker(self.app.action_quit, exclusive=True, group="quit")
+
     def compose(self) -> ComposeResult:
         with Vertical(id="splash-container"):
             with Center():
