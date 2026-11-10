@@ -167,7 +167,7 @@ class SplashView(Screen):
     app: "AirscopeApp"
 
     BINDINGS = [
-        ("q", "app.quit", "Quit"),
+        ("q", "quit", "Quit"),
         ("v", "vault", "Captured Results"),
         Binding("enter", "enter", "Start", priority=True),
     ]

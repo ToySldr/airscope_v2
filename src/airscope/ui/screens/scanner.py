@@ -233,7 +233,7 @@ class ScannerView(Screen):
     """
 
     BINDINGS = [
-        Binding("q", "app.quit", "Quit", show=True),
+        Binding("q", "quit", "Quit", show=True),
         Binding("f", "toggle_freeze", "Freeze", show=True),
         Binding("s", "cycle_sort", "Sort", show=True),
         Binding("v", "open_vault", "Vault", show=True),

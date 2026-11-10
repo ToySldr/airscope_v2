@@ -253,6 +253,18 @@ class AirscopeApp(App):
         self.exit()
 
 
+    async def on_exit_app(self) -> None:
+        """Safety net: release wireless cards even when airscope exits via Ctrl+C,
+        SIGTERM, or any path that does not go through action_quit().  Idempotent --
+        if action_quit already cleaned up there is nothing left to remove, and
+        modprobe on an already-loaded module is a no-op.
+        """
+        try:
+            from airscope.setup.linux import release_all
+            await asyncio.to_thread(release_all)
+        except Exception as exc:
+            logger.warning("on_exit_app: failed to release wireless cards: %s", exc)
+
 _FILE_LOGGING_CONFIGURED = False  # Avoid duplicate loggers
 
 
