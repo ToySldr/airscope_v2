@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import sys
@@ -242,6 +243,13 @@ class AirscopeApp(App):
         self.persist_config()
         if self.array:
             await self.array.close()
+        # Release any cards we handed to airscope (modprobe blocklist + udev rules) so they return
+        # to their normal kernel driver on the next replug, instead of staying "installed".
+        try:
+            from airscope.setup.linux import release_all
+            await asyncio.to_thread(release_all)
+        except Exception as exc:  # teardown must never prevent exit
+            logger.warning("Failed to release wireless cards on exit: %s", exc)
         self.exit()
 
 
