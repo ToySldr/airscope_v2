@@ -270,16 +270,15 @@ class AirscopeApp(App):
         "quit") AND this App-level on_key handler both fire for the same keypress,
         Textual schedules two concurrent action_quit() tasks. The _quitting flag
         ensures only the first one runs full cleanup; subsequent calls return immediately.
-        """
-        if self._quitting:
-            logger.info("action_quit: already quitting, ignoring duplicate call")
-            return
-        self._quitting = True
 
         Every cleanup step is wrapped in timeouts so that a hung adapter close
         or a slow modprobe cycle can never prevent self.exit() from being
         called.  self.exit() is in a finally block — it ALWAYS runs.
         """
+        if self._quitting:
+            logger.info("action_quit: already quitting, ignoring duplicate call")
+            return
+        self._quitting = True
         print("\n[airscope] action_quit: shutting down...", flush=True)
         try:
             self.notify("Shutting down…", severity="information", timeout=8)
