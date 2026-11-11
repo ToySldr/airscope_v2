@@ -135,6 +135,7 @@ class AirscopeApp(App):
         self.target_ap: Optional[AccessPoint] = None
         self.vault = Vault()
         self.pbc_enabled: bool = True
+        self._quitting: bool = False  # guard against double-execution of action_quit()
         register_app_themes(self)
         self.theme = Config.theme
         _register_cleanup()
@@ -249,6 +250,12 @@ class AirscopeApp(App):
         The binding system (Screen BINDINGS) was not reliably dispatching
         'q' → action_quit on the Pi (Textual 8.2.8). This handler catches
         the key at the App level as a fallback.
+
+        Note: Screens like splash.py and scanner.py also have their own
+        Binding("q", "quit") which dispatches to action_quit() via Textual's
+        binding system. That means BOTH paths can fire for one keypress, scheduling
+        action_quit twice. The _quitting guard in action_quit() prevents the second
+        invocation from running redundant cleanup or calling self.exit() again.
         """
         if event.key == "q":
             event.stop()
@@ -258,6 +265,16 @@ class AirscopeApp(App):
 
     async def action_quit(self):
         """Quit: persist config, close adapters, release cards, exit.
+
+        Guard against double-invocation: when a Screen has its own Binding("q",
+        "quit") AND this App-level on_key handler both fire for the same keypress,
+        Textual schedules two concurrent action_quit() tasks. The _quitting flag
+        ensures only the first one runs full cleanup; subsequent calls return immediately.
+        """
+        if self._quitting:
+            logger.info("action_quit: already quitting, ignoring duplicate call")
+            return
+        self._quitting = True
 
         Every cleanup step is wrapped in timeouts so that a hung adapter close
         or a slow modprobe cycle can never prevent self.exit() from being
