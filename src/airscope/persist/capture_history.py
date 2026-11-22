@@ -175,7 +175,7 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
         # (typically resolved from the parent directory name by load_capture_index's
         # _bssid_from_parent fallback). Create a minimal entry so the capture is
         # still visible in airscope instead of being silently dropped.
-        if bssid:
+        if bssid and path.suffix.lower() in {".cap", ".pcap", ".pcapng", ".hc22000", ".22000"}:
             return [PersistedCapture(type=CaptureType.HS, timestamp=0,
                                      path=str(path), bssid=bssid, ssid=None,
                                      record_count=0)]
@@ -280,6 +280,8 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     # (e.g. SSID_BSSID/SSID_BSSID_timestamp_handshake.pcap) are also found,
     # not just airscope's own flat-layout files at the top level.
     for path in root.rglob("*"):
+        if any(part.startswith(".airscope-") for part in path.relative_to(root).parts):
+            continue
         if not path.is_file():
             continue
         bssid: str | None = None

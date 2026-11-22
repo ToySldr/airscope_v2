@@ -70,6 +70,8 @@ class Vault:
         own contents (HS/PMKID hashlines). Empty string if unreadable."""
         if capture.value is not None:
             return capture.value
+        if Path(capture.path).suffix.lower() in {".cap", ".pcap", ".pcapng"}:
+            return ""
         try:
             return Path(capture.path).read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
