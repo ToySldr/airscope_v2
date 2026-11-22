@@ -54,12 +54,21 @@ class RxReaderThread:
         self._thread.start()
         logger.debug(f"[{self._name}] RX reader thread started")
 
-    async def stop(self, join_timeout: float = 1.5) -> None:
-        """waits up to one ``read_once`` timeout once ``_running`` clears."""
+    async def stop(self, join_timeout: float = 1.5, *, require_exit: bool = False) -> None:
+        """Stop RX; optionally require confirmed thread termination."""
         self._running = False
-        t, self._thread = self._thread, None
-        if t is not None:
-            await self._loop.run_in_executor(None, t.join, join_timeout)
+        t = self._thread
+        if t is None:
+            return
+
+        await self._loop.run_in_executor(None, t.join, join_timeout)
+
+        if t.is_alive() and require_exit:
+            raise TimeoutError(
+                f"[{self._name}] RX thread still alive; USB release blocked"
+            )
+
+        self._thread = None
 
     @property
     def running(self) -> bool:

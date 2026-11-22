@@ -180,13 +180,13 @@ def test_emit_blacklist_text_blacklists_and_neutralizes_each_module():
 
 # --- privileged shell builders -----------------------------------------------------------------
 
-def test_install_cmd_writes_both_files_unloads_module_and_grants_node():
+def test_install_cmd_writes_both_files_preserves_modules_and_grants_node():
     cmd = lin._install_cmd(tmp_rule="/t/r.rules", key="ar9271", tmp_blacklist="/t/b.conf",
                            modules=["ath9k_htc"], group="sudo", node="/dev/bus/usb/003/053")
     assert f"install -m 0644 /t/r.rules {rule_path('ar9271')}" in cmd
     assert f"install -m 0644 /t/b.conf {blacklist_path('ar9271')}" in cmd
     assert "udevadm control --reload-rules" in cmd
-    assert "modprobe -r ath9k_htc" in cmd
+    assert "modprobe -r" not in cmd
     assert "(chgrp sudo /dev/bus/usb/003/053 || true) && (chmod 0660 /dev/bus/usb/003/053 || true)" in cmd
 
 

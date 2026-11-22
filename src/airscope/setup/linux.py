@@ -234,12 +234,8 @@ def _install_cmd(*, tmp_rule: str | None, key: str, tmp_blacklist: str | None,
     if tmp_blacklist:
         steps.append(f"install -m 0644 {q(tmp_blacklist)} {q(blacklist_path(key))}")
     steps.append("udevadm control --reload-rules")
-    if modules:
-        # Best-effort: frees the warm card now and stops an already-resident module re-grabbing the
-        # device on replug. Fails harmlessly if another card holds the module. The blacklist still
-        # keeps it from *loading* on a future cold boot.
-        mods = " ".join(q(m) for m in modules)
-        steps.append(f"(modprobe -r {mods} 2>/dev/null || true)")
+    # SAFETY: Do not unload shared kernel drivers during setup.
+    # Existing bound adapters require a separate, device-specific handover.
     if group and node:
         # Ignore failures in the ch* commands in case the device re-enumerated to a different node.
         steps += [f"(chgrp {q(group)} {q(node)} || true)", f"(chmod 0660 {q(node)} || true)"]
@@ -354,7 +350,7 @@ def release_all() -> list[SetupResult]:
     # Collect every module name from all installed airscope confs *before*
     # we delete them, so we can reload the kernel drivers after removal.
     # Without this step the USB adapters stay invisible until a physical
-    # replug or reboot — release_all removed the blacklist but never told
+    # replug or reboot - release_all removed the blacklist but never told
     # the kernel to load the driver back into memory.
     modules_to_reload: list[str] = []
     seen_modules: set[str] = set()
@@ -375,37 +371,15 @@ def release_all() -> list[SetupResult]:
         except Exception as exc:  # never let one chipset abort shutdown
             logger.warning("release_all: failed to remove rules for %s: %s", key, exc)
 
-    # Reload kernel modules so the freed adapters become visible immediately,
-    # without requiring a physical replug or reboot.  Best-effort: failures are
-    # logged but never prevent exit (the blacklist files are already gone).
-    #
-    # We do an rmmod + modprobe cycle rather than just `modprobe` because a prior
-    # airscope session may have removed the driver while USB devices were still
-    # connected; in that state simply loading the module does NOT trigger device
-    # rebinding.  Removing then reloading forces the kernel to scan for and bind
-    # the now-unblacklisted adapters.
-    #
-    # Some conf files list alias names (e.g. rtl88XXau) alongside the real
-    # DKMS module name (88XXau).  We try both; rmmod on a non-existent module is
-    # harmlessly ignored, and we only warn when *neither* form can be loaded.
+    # SAFETY: Never cycle entire kernel drivers during Airscope shutdown.
+    # The rules above have been removed. Normal kernel binding may require
+    # a physical replug or reboot. Other interfaces (including an AP)
+    # must not be interrupted by Airscope cleanup.
     if modules_to_reload:
-        for m in modules_to_reload:
-            # Derive the bare name (strip "rtl" prefix) as an alias fallback.
-            bare = m[3:] if m.startswith("rtl") and len(m) > 6 else None
-            candidates = [m] + ([bare] if bare and bare != m else [])
-            loaded_any = False
-            for cand in candidates:
-                subprocess.call(["rmmod", cand], timeout=10)  # ignore errors
-                rc = subprocess.call(["modprobe", cand], timeout=15)
-                if rc == 0:
-                    logger.info("release_all: reloaded kernel module %s", cand)
-                    loaded_any = True
-                    break  # this chipset is handled; stop trying aliases
-            if not loaded_any:
-                logger.warning(
-                    "release_all: could not load any of %s for adapter; replug it.",
-                    candidates,
-                )
+        logger.info(
+            "release_all: removed Airscope rules; skipped kernel module "
+            "unload/reload. Replug affected adapter if needed."
+        )
 
     return results
 _CONF_SUFFIX = ".conf"
@@ -528,11 +502,22 @@ def _residual_blocked(own_modules: set[str], removed_keys: set[str]) -> dict[str
 # --- public install / remove --------------------------------------------------------------------
 
 def install_rule(target: SetupTarget, *, node: str | None = None) -> SetupResult:
-    """Hand ``target``'s chipset to airscope: write the per-chipset blacklist + udev access rule under
-    one elevation prompt, reload udev, and best-effort unload the kernel module. The card needs a
-    physical replug afterwards to reach a clean cold state (the caller asks for it)."""
+    """Install per-chipset access/blacklist rules without unloading a kernel driver.
+    A bound device is not automatically detached; controlled, device-specific
+    handover and a physical replug may still be necessary."""
     if not sys.platform.startswith("linux"):
         raise RuntimeError("install_rule is Linux-only")
+
+    # SAFETY: Kernel module blacklists are global, not USB-device-specific.
+    # Refuse installation while this adapter family has bound interfaces.
+    # The selected interface must be handed over separately and safely.
+    if kernel_driver_bound(target.ids):
+        return SetupResult(
+            ok=False,
+            message="Safety stop: the kernel still controls this adapter family. "
+                    "No driver was unloaded or blacklisted. A device-specific "
+                    "handover is required before Airscope can use this adapter."
+        )
 
     modules = discover_kernel_modules(target)
     is_root = os.geteuid() == 0
@@ -667,7 +652,14 @@ class SetupLinux(Setup):
     modprobe unload to reach a clean cold state; ``install`` drives that through the Prompter."""
 
     def requires_setup(self, device_id: DeviceID) -> bool:
-        """True when a kernel driver is bound to the card, so a cold bring-up would collide."""
+        """Use a carefully guarded direct USB path for the selected RTL8814AU only."""
+        from airscope.setup.usb_handover import opt_in, preflight_8814
+        if opt_in(device_id):
+            ok, reason = preflight_8814(device_id)
+            if ok:
+                logger.info("RTL8814AU direct USB preflight passed: %s", reason)
+                return False
+            logger.warning("RTL8814AU direct USB preflight rejected: %s", reason)
         return kernel_driver_bound([(device_id.vid, device_id.pid)])
 
     async def install(self, device_id: DeviceID, ui: Prompter) -> DeviceID | None:

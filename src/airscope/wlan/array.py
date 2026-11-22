@@ -419,5 +419,20 @@ class WlanArray:
         self._run_on_loop(_spawn)
 
     async def close(self) -> None:
-        await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
+        members = tuple(self._members)
+        results = await asyncio.gather(
+            *(m.close() for m in members),
+            return_exceptions=True,
+        )
+
+        failures = [
+            result for result in results
+            if isinstance(result, BaseException)
+        ]
+
+        if failures:
+            raise RuntimeError(
+                f"WlanArray: {len(failures)} adapter shutdown(s) failed"
+            ) from failures[0]
+
         self._members.clear()

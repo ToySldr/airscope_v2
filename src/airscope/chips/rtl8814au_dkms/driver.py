@@ -86,6 +86,12 @@ class Rtl8814auDkmsDriver(Driver):
     def __init__(self, transport: Rtl8814auTransport):
         super().__init__()          # base owns the ACK tally (_ack_detect_on / _our_tx_macs / _ack_counts)
         self.transport = transport
+        self._airscope_handover_lock: int | None = None
+        self._usb_closing = False
+        self._usb_close_lock = asyncio.Lock()
+        self._usb_closed = False
+        self._usb_jobs: set[asyncio.Future] = set()
+        self._usb_claim_future: asyncio.Future | None = None
         self.mac_address: Optional[str] = None  # M2: efuse read
         self._channel: Optional[int] = None
         # Vendor lagging current_band_type. init_hw_mlme_ext resets it to BAND_MAX, so 2.4 GHz
@@ -181,8 +187,45 @@ class Rtl8814auDkmsDriver(Driver):
                                        rfe_type=params.rfe_type)
         return params
 
-    async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+    async def _usb_call(self, fn, *args, handover=False):
+        """Track USB executor work after its asyncio caller is cancelled."""
+        if self._usb_closing:
+            raise RuntimeError("RTL8814AU shutdown in progress")
         loop = asyncio.get_running_loop()
+        job = loop.run_in_executor(None, fn, *args)
+        self._usb_jobs.add(job)
+        job.add_done_callback(self._usb_jobs.discard)
+        if handover:
+            self._usb_claim_future = job
+        try:
+            return await asyncio.shield(job)
+        except asyncio.CancelledError:
+            # Preserve IO-lock serialization until the actual USB call finishes.
+            try:
+                await asyncio.shield(job)
+            except Exception:
+                pass
+            raise
+
+    async def connect(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        try:
+            return await self._connect_impl(progress_cb)
+        except (Exception, asyncio.CancelledError):
+            if (getattr(self, "_airscope_handover_lock", None) is not None
+                    or getattr(self, "_usb_claim_future", None) is not None):
+                logger.exception("RTL8814AU initialization stopped; restoring USB")
+                try:
+                    await self.close()
+                except Exception:
+                    logger.exception("RTL8814AU initialization cleanup failed")
+            raise
+
+    async def _connect_impl(self, progress_cb: Optional[ProgressCallback] = None) -> bool:
+        loop = asyncio.get_running_loop()
+        # Opt-in USB interface handover is performed before any firmware/register IO.
+        from airscope.setup.usb_handover import claim_opted_in_8814
+        self._airscope_handover_lock = await self._usb_call(
+            claim_opted_in_8814, self.transport.dev, handover=True)
         # USB link speed decides rf_path (RF_2T4R over USB 2, RF_3T3R for a SuperSpeed 3T/4T
         # part). Read it once here (the pcap gate never calls connect(), so its _bringup keeps
         # the __init__ default False -> RF_2T4R, byte-matching the capture).
@@ -194,7 +237,7 @@ class Rtl8814auDkmsDriver(Driver):
         def _emit(pct: float, msg: str) -> None:
             if progress_cb:
                 loop.call_soon_threadsafe(progress_cb, pct, msg)
-        params = await loop.run_in_executor(None, self._bringup, self.transport, _emit)
+        params = await self._usb_call(self._bringup, self.transport, _emit)
         # Detected per-card config — an odd card (rfe_type != 1, other antenna/rf_path, unusual
         # fuse) is diagnosable from this one line. rfe_type != 1 and rf_path != RF_2T4R run
         # ported-but-hardware-untested branches (see RTL8814AU_DKMS.md "Untested variants").
@@ -221,7 +264,7 @@ class Rtl8814auDkmsDriver(Driver):
         # draining the bulk-IN pipe, so the chip RX FIFO has a host read posted the moment
         # frames are accepted — the kernel's order (post URBs, then write the RCR). Doing the
         # reverse overflows the FIFO at startup and leaves 2.4 GHz RX degraded.
-        await loop.run_in_executor(None, enter_monitor, self.transport)
+        await self._usb_call(enter_monitor, self.transport)
 
         # M3c: the runtime phydm DIG/AGC watchdog — adapt the M3a IGI seed to the
         # live false-alarm rate every ~2 s (the kernel cadence). RX-side only.
@@ -249,7 +292,7 @@ class Rtl8814auDkmsDriver(Driver):
                 await asyncio.sleep(WATCHDOG_PERIOD_S)
                 async with self._io_lock:
                     ch = self._channel or _DEFAULT_CHANNEL
-                    fa = await loop.run_in_executor(None, watchdog_tick, self.transport, st, ch)
+                    fa = await self._usb_call(watchdog_tick, self.transport, st, ch)
                 logger.debug("RTL8814AU watchdog: IGI=0x%02x fa=%d", st.cur_ig_value, fa)
         except asyncio.CancelledError:
             pass
@@ -338,11 +381,11 @@ class Rtl8814auDkmsDriver(Driver):
             reader = self._reader
             pause = reader is not None and not scan
             if pause:
-                await loop.run_in_executor(None, reader.pause)
+                await self._usb_call(reader.pause)
             try:
-                await loop.run_in_executor(None, self._tune, self.transport, channel)
+                await self._usb_call(self._tune, self.transport, channel)
                 if pause:      # band switch re-enabled RX with no read posted -> re-prime the pipe
-                    await loop.run_in_executor(None, self.transport.reset_rx_pipe)
+                    await self._usb_call(self.transport.reset_rx_pipe)
             finally:
                 if pause:
                     reader.resume()
@@ -379,7 +422,7 @@ class Rtl8814auDkmsDriver(Driver):
             return False
         loop = asyncio.get_running_loop()
         async with self._io_lock:           # don't TX mid-retune (set_channel/DIG)
-            await loop.run_in_executor(None, self._inject, self.transport, frame_bytes)
+            await self._usb_call(self._inject, self.transport, frame_bytes)
         return True
 
     def _stamp_tx_seq(self, frame_bytes: bytes) -> bytes:
@@ -393,7 +436,7 @@ class Rtl8814auDkmsDriver(Driver):
         mac_str = ":".join(f"{b:02x}" for b in mac)
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(None, _set_macaddr, self.transport, mac_str)
+            await self._usb_call(_set_macaddr, self.transport, mac_str)
         return bytes(mac)
 
     async def exit_active_monitor(self) -> None:
@@ -402,9 +445,20 @@ class Rtl8814auDkmsDriver(Driver):
             return
         loop = asyncio.get_running_loop()
         async with self._io_lock:
-            await loop.run_in_executor(None, _set_macaddr, self.transport, self.mac_address)
+            await self._usb_call(_set_macaddr, self.transport, self.mac_address)
 
     async def close(self) -> None:
+        lock = getattr(self, "_usb_close_lock", None)
+        if lock is None:
+            lock = self._usb_close_lock = asyncio.Lock()
+        async with lock:
+            if getattr(self, "_usb_closed", False):
+                return
+            await self._close_impl()
+            self._usb_closed = True
+
+    async def _close_impl(self) -> None:
+        self._usb_closing = True
         # Stop the DIG watchdog and the reader before releasing the USB handle.
         if self._dig_task is not None:
             self._dig_task.cancel()
@@ -414,6 +468,52 @@ class Rtl8814auDkmsDriver(Driver):
                 pass
             self._dig_task = None
         if self._reader is not None:
-            await self._reader.stop()
+            await self._reader.stop(join_timeout=3.0, require_exit=True)
             self._reader = None
-        self.transport.close()
+
+        # Cancellation during handover can hide an acquired lock FD.
+        claim = getattr(self, "_usb_claim_future", None)
+        if claim is not None:
+            try:
+                fd = await asyncio.shield(claim)
+            except Exception:
+                pass
+            else:
+                if self._airscope_handover_lock is None:
+                    self._airscope_handover_lock = fd
+
+        # Never restore the kernel driver while USB work is active.
+        pending = [
+            f for f in getattr(self, "_usb_jobs", ())
+            if not f.done()
+        ]
+        if pending:
+            await asyncio.shield(
+                asyncio.gather(*pending, return_exceptions=True)
+            )
+        if any(
+            not f.done()
+            for f in getattr(self, "_usb_jobs", ())
+        ):
+            raise RuntimeError(
+                "RTL8814AU USB worker still active; refusing rebind"
+            )
+
+        lock_fd = getattr(self, "_airscope_handover_lock", None)
+        try:
+            self.transport.close()
+        finally:
+            try:
+                if lock_fd is not None:
+                    from airscope.setup.usb_handover import restore_claimed_8814
+                    try:
+                        if not restore_claimed_8814(self.transport.dev, lock_fd):
+                            logger.error("RTL8814AU automatic restore failed")
+                    except Exception:
+                        logger.exception("RTL8814AU automatic restore error")
+            finally:
+                from airscope.setup.usb_handover import release_claim_lock
+                try:
+                    release_claim_lock(lock_fd)
+                finally:
+                    self._airscope_handover_lock = None
