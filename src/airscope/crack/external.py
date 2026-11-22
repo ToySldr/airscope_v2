@@ -271,19 +271,36 @@ async def run_crack(cmd: list[str], tool: str,
                 ticks.append(prog)
                 if on_progress is not None:
                     on_progress(prog)
-    finally:
+        await proc.wait()
+    except BaseException:
+        # Stop the child only on cancellation or an actual exception.
         if proc.returncode is None:
             try:
                 proc.kill()
             except ProcessLookupError:
                 pass
         await proc.wait()
-    return CrackRun(exit_code=proc.returncode or 0, output="".join(chunks), ticks=ticks)
+        raise
+
+    return CrackRun(
+        exit_code=proc.returncode,
+        output="".join(chunks),
+        ticks=ticks,
+    )
 
 
 async def run_capture_output(cmd: list[str]) -> tuple[int, str]:
     """Run a short helper (``--show``) and return (exit, output)."""
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await proc.communicate()
+    try:
+        out, _ = await proc.communicate()
+    except BaseException:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        await proc.wait()
+        raise
     return proc.returncode or 0, out.decode("utf-8", errors="replace")

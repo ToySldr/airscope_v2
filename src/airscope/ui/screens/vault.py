@@ -10,13 +10,13 @@ from typing import Dict, List, Optional, Tuple
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, VerticalScroll
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header
+from textual.widgets import DataTable, Footer, Header, Label
 
 from airscope.models import CaptureType, PersistedCapture
 
-from .vault_item import VaultItemView
+from .vault_item import VaultItemView, _CapturePanel
 
 _CAPTURE_TYPES = (CaptureType.HS, CaptureType.PMKID, CaptureType.SAE)
 _KEY_TYPES = (CaptureType.WEP, CaptureType.WPS_PIN, CaptureType.WPS_PBC, CaptureType.CRACKED)
@@ -37,6 +37,7 @@ class VaultView(Screen):
     """The loot manager: an AP list beside a per-AP capture detail pane."""
 
     BINDINGS = [
+        Binding("d", "dismiss_job_status", "Dismiss status"),
         Binding("escape", "go_back", "Back", show=True),
         Binding("z", "export_zip", "Export Zip", show=True),
         Binding("o", "show_directory", "Show Directory", show=True),
@@ -44,6 +45,12 @@ class VaultView(Screen):
     ]
 
     CSS = """
+    VaultView #vault-status-panel {
+        width: 1fr; height: auto; max-height: 6; border: round $accent; padding: 0 1;
+        margin: 0 1; background: $panel; border-title-color: $accent;
+    }
+    VaultView #vault-status-panel.recovered { border: round $success; }
+    VaultView #vault-status-panel.failed { border: round $error; }
     VaultView #vault-body { height: 1fr; }
     VaultView #vault-aps { width: 40%; height: 1fr; border: round $primary;
                            border-title-color: $primary; border-title-style: bold; }
@@ -52,6 +59,7 @@ class VaultView(Screen):
 
     def __init__(self) -> None:
         super().__init__()
+        self._rendered_recovery = None
         self._aps: Dict[str, Tuple[Optional[str], List[PersistedCapture]]] = {}
 
     def compose(self) -> ComposeResult:
@@ -59,6 +67,9 @@ class VaultView(Screen):
         with Horizontal(id="vault-body"):
             yield DataTable(id="vault-aps")
             yield VaultItemView(id="vault-item")
+        with VerticalScroll(id="vault-status-panel") as panel:
+            panel.border_title = "Cracking Status"
+            yield Label("IDLE - No active cracking job.", id="vault-job-status", markup=False)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -67,8 +78,34 @@ class VaultView(Screen):
         table.add_columns("ESSID", "Handshakes", "Passwords")
         self._reload_table()
 
+        self._render_job_status()
+        self.set_interval(0.25, self._render_job_status)
+
+    def _render_job_status(self) -> None:
+        status = self.app.vault_job_status
+        label = self.query_one("#vault-job-status", Label)
+        panel = self.query_one("#vault-status-panel")
+        panel.set_class(bool(status and status.phase == "RECOVERED"), "recovered")
+        panel.set_class(bool(status and status.phase in {"FAILED", "FAILED TO SAVE"}), "failed")
+        message = "IDLE - No active cracking job."
+        if status is not None:
+            if status.phase == "RECOVERED" and status is not self._rendered_recovery:
+                self._rendered_recovery = status
+                self._reload_table()
+            message = status.display()
+        if label.content != message:
+            label.update(message)
+
+    def action_dismiss_job_status(self) -> None:
+        status = self.app.vault_job_status
+        if status is not None and status.ended is not None:
+            self.app.vault_job_status = None
+            self._render_job_status()
+
     def on_screen_resume(self) -> None:
         """Re-render from the cache each visit (campaigns fold their saves into app.vault)."""
+        for panel in self.query(_CapturePanel):
+            panel.hide_password()
         self._reload_table()
 
     # ----- data --------------------------------------------------------------

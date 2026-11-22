@@ -24,6 +24,7 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select
 
+from airscope.ui.job_status import VaultJobStatus
 from airscope.models import CaptureType, PersistedCapture
 from airscope.crack import external as crack_ext
 from airscope.persist.common import bssid_to_dashed
@@ -219,7 +220,7 @@ class _CapturePanel(VerticalGroup):
     _CapturePanel .modified { height: 1; margin-bottom: 1; }
     _CapturePanel .field { height: 1; align: left middle; }
     _CapturePanel .fval { width: 1fr; height: 1; }
-    _CapturePanel .field .copy { height: 1; min-width: 8; border: none; }
+    _CapturePanel .field Button { width: auto; height: 1; min-width: 8; border: none; }
     _CapturePanel .actions { height: auto; align: left middle; }
     _CapturePanel .actions Button { margin-right: 1; }
     _CapturePanel .crack-progress { height: auto; color: $text-muted; margin-top: 1; }
@@ -235,6 +236,8 @@ class _CapturePanel(VerticalGroup):
         self._files = list(self._by_path.values())
         self._show_consolidate = show_consolidate
         self._crackable = bool({c.type for c in self._files} & {CaptureType.HS, CaptureType.PMKID})
+        self._status = None
+        self._password_visible = False
         self._crack_worker = None
         self._crack_pending: Optional[tuple] = None
         self._crack_tool = ""
@@ -250,6 +253,8 @@ class _CapturePanel(VerticalGroup):
             for flabel, fkey in fields:
                 with Horizontal(classes="field"):
                     yield Label(self._field_text(newest, flabel, fkey), classes=f"fval fval-{fkey}")
+                    if fkey == "psk":
+                        yield Button("Show", classes="toggle-password")
                     yield Button("Copy", classes=f"copy copy-{fkey}")
         else:
             yield Label(Text.from_markup(self._detail_markup(newest)), classes="detail")
@@ -274,10 +279,11 @@ class _CapturePanel(VerticalGroup):
         when = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
         return Text.from_markup(f"[dim]Modified:[/dim] {when}")
 
-    @staticmethod
-    def _field_text(cap: PersistedCapture, flabel: str, fkey: str) -> Text:
+    def _field_text(self, cap: PersistedCapture, flabel: str, fkey: str) -> Text:
         val = _field_value(cap, fkey)
         shown = escape(val) if val else "[dim](none)[/dim]"
+        if val and fkey == "psk" and not self._password_visible:
+            shown = "********"
         return Text.from_markup(f"[dim]{escape(flabel)}:[/dim] {shown}")
 
     def _detail_markup(self, cap: PersistedCapture) -> str:
@@ -306,8 +312,25 @@ class _CapturePanel(VerticalGroup):
 
     # ----- events -----
 
+    def hide_password(self) -> None:
+        if self._password_visible:
+            self._set_password_visible(False)
+
+    def _set_password_visible(self, visible: bool) -> None:
+        self._password_visible = visible
+        cap = self._selected()
+        if cap is not None:
+            self.query_one(".fval-psk", Label).update(self._field_text(cap, "PSK", "psk"))
+            self.query_one(".toggle-password", Button).label = "Hide" if visible else "Show"
+
+    @on(Button.Pressed, ".toggle-password")
+    def _toggle_password(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_password_visible(not self._password_visible)
+
     @on(Select.Changed)
     def _file_changed(self, event: Select.Changed) -> None:
+        self.hide_password()
         cap = self._by_path.get(event.value)
         if cap is None:
             return
@@ -378,8 +401,15 @@ class _CapturePanel(VerticalGroup):
 
     # ----- dictionary crack (hashcat preferred, aircrack-ng fallback) --------
 
-    def _crack_note(self, text: str) -> None:
+    def _crack_note(self, text: str, phase: str = "FAILED") -> None:
         """Progress/result line under the actions row (best-effort: pane may close)."""
+        if self._status is not None and self._status.ended is None:
+            self._status.update(phase, text)
+            if self._status.ended is not None and self.app.vault_job_status is self._status:
+                self.app.notify(self._status.display(), title="Vault job",
+                                severity="error" if phase in {"FAILED", "FAILED TO SAVE"} else "information")
+        if not self.is_mounted:
+            return
         try:
             self.query_one(".crack-progress", Label).update(text)
         except Exception:
@@ -427,7 +457,9 @@ class _CapturePanel(VerticalGroup):
             self.query_one(".crack", Button).disabled = True
         except Exception:
             pass
-        self._crack_note(f"Starting {tool}…")
+        self._status = VaultJobStatus(Path(self._crack_pending[2]).name, tool)
+        self.app.vault_job_status = self._status
+        self._crack_note(f"Starting {tool}…", "QUEUED")
         self._crack_worker = self.run_worker(self._run_crack(wordlist), exclusive=True)
 
     def _crack_tick(self, prog) -> None:
@@ -440,7 +472,7 @@ class _CapturePanel(VerticalGroup):
         if prog.speed:
             text += f" · {prog.speed}"
         text += " - press Crack to stop"
-        self._crack_note(text)
+        self._crack_note(text, "RUNNING")
 
     async def _run_crack(self, wordlist: str) -> None:
         """Drive the child to completion, then attach any recovered PSK to VAULT."""
@@ -452,6 +484,7 @@ class _CapturePanel(VerticalGroup):
         kind = "HS" if newest.type == CaptureType.HS else "PMKID"
         psk: Optional[str] = None
         tmp_hashfile: Optional[Path] = None
+        self._crack_note("Processing", "RUNNING")
         try:
             if tool == "hashcat":
                 records = crack_ext.extract_records(hashfile, kind)
@@ -477,15 +510,15 @@ class _CapturePanel(VerticalGroup):
                     pass
             if psk:
                 self.app.vault.save_cracked_psk(newest.bssid, newest.ssid, psk, tool)
-                self._crack_note(f"✓ Password recovered: {psk}")
-                self.notify(f"Cracked PSK for {newest.ssid or newest.bssid}: {psk}",
-                            title="Password cracked")
+                self._crack_note("Password recovered.", "RECOVERED")
                 self.post_message(VaultItemView.CapturesChanged())
             else:
-                self._crack_note("Finished - no match found in wordlist.")
+                self._crack_note("Finished - no match found in wordlist.", "NO MATCH")
         except asyncio.CancelledError:
-            self._crack_note("Stopped.")
+            self._crack_note("Stopped.", "CANCELLED")
             raise
+        except Exception as exc:
+            self._crack_note(f"Job failed: {type(exc).__name__}", "FAILED")
         finally:
             if tmp_hashfile is not None:
                 try:
@@ -520,12 +553,13 @@ class VaultItemView(Vertical):
     def load(self, bssid: str, ssid: Optional[str], captures: List[PersistedCapture],
              *, empty_vault: bool = False) -> None:
         """Show one AP's captures (empty bssid clears the pane)."""
+        empty_message_changed = not bssid and empty_vault != getattr(self, "_empty_vault", False)
         self._empty_vault = empty_vault
         state = (bssid, ssid, tuple(captures))
-        if state == self._state:
-            self.refresh(recompose=True)  # identical value: reactive won't refire
-        else:
+        if state != self._state:
             self._state = state
+        elif empty_message_changed:
+            self.refresh(recompose=True)
 
     def compose(self) -> ComposeResult:
         bssid, ssid, captures = self._state

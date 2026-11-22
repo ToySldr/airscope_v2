@@ -121,6 +121,7 @@ class AirscopeApp(App):
 
     def __init__(self, cli_log_level=None):
         super().__init__()
+        self.vault_job_status = None
         self._config_error: Optional[str] = None
         try:
             Config.load()
