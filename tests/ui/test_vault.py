@@ -79,9 +79,9 @@ async def test_ap_table_lists_aps_with_counts(tmp_path):
         table = view.query_one("#vault-aps", DataTable)
         assert table.row_count == 1
         row = table.get_row_at(0)
-        assert row[0] == "HomeNet"
-        assert row[1] == "1"   # captures: the hc22000 + pcap handshake dedupe to one
-        assert row[2] == "1"   # keys: one WEP key
+        assert str(row[1]) == "HomeNet"
+        assert row[2] == "1?"  # one deduplicated handshake, unverified
+        assert row[3] == "1"   # keys: one WEP key
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_duplicate_essid_disambiguated_by_bssid(tmp_path):
         view = await _open_vault(app)
         await pilot.pause()
         table = view.query_one("#vault-aps", DataTable)
-        names = [table.get_row_at(i)[0] for i in range(table.row_count)]
+        names = [str(table.get_row_at(i)[1]) for i in range(table.row_count)]
         assert len(names) == 2 and all(n.startswith("Net (") for n in names)
 
 
@@ -235,4 +235,4 @@ async def test_aggregate_file_appears_once_and_counts_records(tmp_path):
         await pilot.pause()
         panel = view.query_one(_CapturePanel)               # HANDSHAKE / PMKID
         assert panel.border_title.endswith("(1)")            # one file, not two entries
-        assert view.query_one("#vault-aps", DataTable).get_row_at(0)[1] == "3"  # 1 HS + 2 PMKID
+        assert view.query_one("#vault-aps", DataTable).get_row_at(0)[2] == "3?"  # 1 HS + 2 PMKID, unverified

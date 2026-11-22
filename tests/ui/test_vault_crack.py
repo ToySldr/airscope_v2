@@ -104,7 +104,7 @@ async def test_full_crack_flow_saves_psk_to_vault(tmp_path, monkeypatch):
                 break
         assert any("Recovered" in p.border_title for p in view.query(_CapturePanel))
         table = view.query_one("#vault-aps", DataTable)
-        assert table.get_row_at(0)[2] == "1"                     # Keys column counts it
+        assert table.get_row_at(0)[3] == "1"                     # Keys column counts it
 
 
 def test_count_keys_includes_cracked():
