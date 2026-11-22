@@ -229,15 +229,13 @@ def _resolve_captures_dir() -> Path:
     existing captures instead of silently returning an empty index.
     """
     configured = Path(Config.captures_dir)
-    if configured.is_dir():
+    if configured.is_absolute() or configured.is_dir():
         return configured
     # Resolve relative to known project roots.
     candidates: list[Path] = []
-    if not configured.is_absolute():
-        for base in (Path.home(), Path.cwd()):
-            candidates.append(base / configured)
-            candidates.append(base / "Projects" / "wifi-collector" / str(configured))
-    # Absolute but missing — try sibling dirs.
+    for base in (Path.home(), Path.cwd()):
+        candidates.append(base / configured)
+        candidates.append(base / "Projects" / "wifi-collector" / configured)
     candidates.append(Path.home() / "Projects" / "wifi-collector" / "captures")
     for c in candidates:
         if c.is_dir():

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 import tomllib
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from platformdirs import user_config_dir
 
@@ -48,7 +48,7 @@ class Config:
         #   3. Fall back to ~/Projects/wifi-collector/captures which is
         #      the convention shared with wifi_collector_v14.py, so both
         #      tools see the same captures without manual config edits.
-        if os.path.isabs(captures_dir_raw):
+        if os.path.isabs(captures_dir_raw) or PureWindowsPath(captures_dir_raw).is_absolute():
             cls.captures_dir = captures_dir_raw
         else:
             cwd_relative = Path.cwd() / captures_dir_raw
