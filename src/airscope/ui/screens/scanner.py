@@ -295,8 +295,19 @@ class ScannerView(Screen):
             yield FilterBar(supported)
             yield Label("", id="freeze-banner")
             table = _APScanTable(cursor_type="row", id="ap-table")
+            widths = {
+                "signal": 12,
+                "ssid": 56,
+                "channel": 6,
+                "encryption": 36,
+                "wps": 20,
+                "clients": 9,
+                "identity": 32,
+            }
             for key, label in self._COLUMNS:
-                table.add_column(label + "  ", key=key)
+                table.add_column(
+                    label + "  ", key=key, width=widths[key]
+                )
             yield table
             yield Label("", id="preview-strip")
             yield Label("[dim]waiting for interface[/dim]", id="scan-status")
@@ -334,6 +345,8 @@ class ScannerView(Screen):
             self._log_pbc_status()  # Auto-invade is ON by default
 
     async def on_screen_resume(self) -> None:
+        # Restore keyboard focus after returning from Vault.
+        self.query_one("#ap-table", DataTable).focus()
         if self._frozen:
             self._frozen = False
             self._update_freeze_banner(False)

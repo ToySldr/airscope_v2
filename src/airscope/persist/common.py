@@ -67,7 +67,7 @@ def _v14_bssid_to_colon(raw: str) -> str:
     cleaned = raw.strip().replace("-", "").replace(":", "")
     if len(cleaned) == 12:
         return ":".join(cleaned[i:i+2] for i in range(0, 12, 2)).lower()
-    # Already colon or dash separated — use the standard converter.
+    # Already colon or dash separated - use the standard converter.
     return bssid_to_colon(raw)
 
 

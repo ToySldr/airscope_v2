@@ -1,8 +1,8 @@
-# PROJECT SUMMARY - airoscpe
+# PROJECT SUMMARY - airscope
 
 ## Overview
 
-**airscope v0.3.8** is a Wi-Fi security auditing tool that runs natively on Linux, Windows (via WSL2), and macOS. It connects directly to USB Wi-Fi adapters via libusb in userspace, eliminating the need for kernel drivers, monitor mode setup, or external tools like aircrack-ng.
+**airscope v0.3.9** is a Wi-Fi security auditing tool that runs natively on Linux, Windows (via WSL2), and macOS. Its original design connects to USB Wi-Fi adapters via libusb in userspace (no external tools like aircrack-ng); on the **validated Raspberry Pi 5**, capture defaults to a **kernel-monitor backend** that uses the bound kernel driver (the RTL8812AU needs a DKMS-patched 88XXau module for reliable beacons) — see docs/DRIVER_INSTALL.md. The legacy userspace PyUSB backend and the RTL8814AU USB handover are experimental/unsupported in v0.3.9; DKMS compilation is verified but a full clean-system install is not; automatic capture retention is disabled (manual Vault 'Clean Empty' uses quarantine safeguards). See docs/RELEASE_NOTES_v0.3.9.md.
 
 ### Key Statistics
 
@@ -240,14 +240,14 @@ pyinstaller airscope.spec --noconfirm  # Build bundle -> dist/
 
 ## Security Considerations
 
-### What airoscpe Does
+### What airscope Does
 - ✅ Reads Wi-Fi network metadata (SSID, BSSID, channel)
 - ✅ Captures cryptographic handshakes for offline analysis
 - ✅ Injects 802.11 frames for testing network resilience
 - ❌ Never stores passwords in plaintext except user-selected captures
 
-### What airoscpe Does NOT Do
-- ❌ No kernel driver loading (pure userspace)
+### What airscope Does NOT Do
+- ❌ No kernel driver loading on the userspace path (pure userspace); the validated Raspberry Pi 5 uses a kernel-monitor backend
 - ❌ No external subprocesses for attacks
 - ❌ No automatic cracking (only capture, user runs hashcat)
 
@@ -278,7 +278,7 @@ pyinstaller airscope.spec --noconfirm  # Build bundle -> dist/
 ## Maintenance Notes
 
 ### Version Control
-- **Version file**: `src/airscope/__init__.py` (`__version__ = "0.3.8"`)
+- **Version file**: `src/airscope/__init__.py` (`__version__ = "0.3.9"`)
 - **Build system**: Hatchling (reads from version file)
 - **Lockfile**: `uv.lock` (deterministic dependency resolution)
 
@@ -293,7 +293,7 @@ pyinstaller airscope.spec --noconfirm  # Build bundle -> dist/
 
 | Item | Status |
 |------|--------|
-| Repository cloned | ✅ `/home/toysldr/Projects/airscope` |
+| Repository cloned | ✅ `~/Projects/airscope` |
 | Source files analyzed | ✅ 658 Python files |
 | Documentation created | ✅ 5 docs (PROJECT_INVENTORY, CAPABILITIES, SUBSYSTEMS, CODEBASE_MAP, USAGE) |
 | Tests cataloged | ✅ 3008+ tests across ~150 files |
@@ -304,7 +304,7 @@ pyinstaller airscope.spec --noconfirm  # Build bundle -> dist/
 
 ## Next Steps (If Requested)
 
-To extend airoscpe, follow the extension workflow:
+To extend airscope, follow the extension workflow:
 1. Update `CODEBASE_MAP.md` with new module relationships
 2. Update relevant `docs/SUBSYSTEMS.md` section
 3. Add CLI flag in `__main__.py`

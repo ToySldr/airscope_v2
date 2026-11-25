@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Callable, Iterator, Iterable
 from typing import Optional
+from airscope.persist.config import Config
 
 HASHCAT_MODE = 22000
 
@@ -35,7 +36,10 @@ INSTALL_HINTS = {
 
 
 def find_wordlist() -> Optional[Path]:
-    """The first rockyou-style wordlist on disk (``WORDLIST_HINTS``), or None."""
+    """Configured global dictionary, otherwise the existing RockYou fallback."""
+    if Config.wordlist_path.strip():
+        configured = Path(Config.wordlist_path).expanduser()
+        return configured if configured.is_file() else None
     for hint in WORDLIST_HINTS:
         p = Path(hint)
         if p.is_file():
@@ -271,19 +275,36 @@ async def run_crack(cmd: list[str], tool: str,
                 ticks.append(prog)
                 if on_progress is not None:
                     on_progress(prog)
-    finally:
+        await proc.wait()
+    except BaseException:
+        # Stop the child only on cancellation or an actual exception.
         if proc.returncode is None:
             try:
                 proc.kill()
             except ProcessLookupError:
                 pass
         await proc.wait()
-    return CrackRun(exit_code=proc.returncode or 0, output="".join(chunks), ticks=ticks)
+        raise
+
+    return CrackRun(
+        exit_code=proc.returncode,
+        output="".join(chunks),
+        ticks=ticks,
+    )
 
 
 async def run_capture_output(cmd: list[str]) -> tuple[int, str]:
     """Run a short helper (``--show``) and return (exit, output)."""
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-    out, _ = await proc.communicate()
+    try:
+        out, _ = await proc.communicate()
+    except BaseException:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        await proc.wait()
+        raise
     return proc.returncode or 0, out.decode("utf-8", errors="replace")

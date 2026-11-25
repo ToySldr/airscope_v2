@@ -265,7 +265,10 @@ class WlanArray:
             return
         pkt = WlanFrameParser.parse_80211_frame(beacon, 0)
         if isinstance(pkt, BeaconPacket):
-            card = self.members[0].name if self.members else "seed"
+            # A self-emitted twin beacon the air never carried: seed it under a non-adapter
+            # label so its synthetic RSSI never lands in a real card's signal_by_card
+            # (was members[0].name, which credited card 0 with a reading it never measured).
+            card = "seed"
             self._sink.update(pkt, card, channel)
 
     def mark_evil_twin(self, bssid: str) -> None:
@@ -419,5 +422,20 @@ class WlanArray:
         self._run_on_loop(_spawn)
 
     async def close(self) -> None:
-        await asyncio.gather(*(m.close() for m in self._members), return_exceptions=True)
+        members = tuple(self._members)
+        results = await asyncio.gather(
+            *(m.close() for m in members),
+            return_exceptions=True,
+        )
+
+        failures = [
+            result for result in results
+            if isinstance(result, BaseException)
+        ]
+
+        if failures:
+            raise RuntimeError(
+                f"WlanArray: {len(failures)} adapter shutdown(s) failed"
+            ) from failures[0]
+
         self._members.clear()

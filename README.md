@@ -5,14 +5,14 @@
 <h1 align="center">airscope</h1>
 
 <p align="center">
-  <strong>The only Wi-Fi security auditor that runs natively on Windows, macOS, and Linux — no monitor-mode setup, no kernel drivers, no aircrack-ng dependency.</strong>
+  <strong>One Python codebase for Wi-Fi auditing on Windows, macOS, and Linux — userspace USB capture by design, plus a validated Raspberry Pi 5 kernel-monitor backend. No aircrack-ng dependency.</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/udhaybhat00/airscope/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-blue" alt="License"></a>
+  <a href="https://github.com/ToySldr/airscope_v2/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--2.0-blue" alt="License"></a>
   <img src="https://img.shields.io/badge/python-%3E%3D3.11-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-brightgreen" alt="Platform">
-  <a href="https://github.com/udhaybhat00/airscope/actions/workflows/ci.yml"><img src="https://github.com/udhaybhat00/airscope/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ToySldr/airscope_v2/actions/workflows/ci.yml"><img src="https://github.com/ToySldr/airscope_v2/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/tests-3008%2B-blue" alt="Tests">
   <img src="https://img.shields.io/badge/chipsets-20-brightgreen" alt="Chipsets">
   <img src="https://img.shields.io/badge/pure-Python-orange" alt="Pure Python">
@@ -23,6 +23,8 @@
 </p>
 
 ---
+
+> **Fork notice** — this is a GPL-2.0 fork of [udhaybhat00/airscope](https://github.com/udhaybhat00/airscope), the origin of the core codebase, extended here with a validated Raspberry Pi 5 kernel-monitor capture backend and the v0.3.9 release work. Upstream retains original authorship; see [AUTHORS.md](AUTHORS.md).
 
 ## Table of Contents
 
@@ -82,7 +84,7 @@ Wi-Fi auditing in 2024+ still looks like this: install Kali Linux, run `airmon-n
 
 airscope reinvents the stack from the USB endpoint up:
 
-- **No kernel drivers.** We talk to the USB device directly from userspace via PyUSB. The adapter never needs `airmon-ng`, `modprobe`, or a DKMS build on your machine.
+- **No kernel drivers — on the userspace path.** airscope's original design talks to the USB device directly from userspace via PyUSB, needing no `airmon-ng`, `modprobe`, or DKMS build. **On the validated Raspberry Pi 5 setup this differs:** the Realtek RTL8812AU/RTL8814AU adapters default to the **kernel-monitor capture backend** (capture *through* the bound kernel driver), and the RTL8812AU uses a DKMS-built patched `88XXau` module — see "Capture backends" below and `docs/DRIVER_INSTALL.md`.
 - **No external tools.** The 802.11 frame stack, DHCP server, DNS blackhole, HTTP captive portal, handshake parser, and WPS machinery are all pure Python in this repository. There is no `hostapd` subprocess, no `dnsmasq` config, no shell-out to `reaver`.
 - **One codebase, three OSes.** The same Python runs on Linux, Windows (via WSL2), and macOS. Platform differences are detected at runtime and communicated clearly to the user (for example, on macOS the EvilTwin button is disabled with the tooltip "Fake-AP phishing page requires Linux", while every other attack runs natively).
 - **A real interface.** A 60fps Textual TUI plus an optional web dashboard, instead of a wall of terminal output.
@@ -92,7 +94,7 @@ airscope reinvents the stack from the USB endpoint up:
 | | airscope | aircrack-ng stack | airgeddon |
 |---|---|---|---|
 | **Install** | `uv sync` | Kernel modules + 5 packages | Bash + many packages |
-| **Kernel changes** | None | Monitor-mode drivers | Same as aircrack-ng |
+| **Kernel changes** | None on the userspace path (DKMS-patched module on the validated Pi) | Monitor-mode drivers | Same as aircrack-ng |
 | **OS support** | Linux + Windows + macOS | Linux only | Linux only |
 | **External processes** | Zero | hostapd, dnsmasq, reaver, ... | All of them |
 | **EvilTwin password check** | Real-time MIC verify, no offline crack | Manual export to hashcat | Manual |
@@ -108,7 +110,7 @@ airscope reinvents the stack from the USB endpoint up:
 ### Step 1: Get the code
 
 ```bash
-git clone https://github.com/udhaybhat00/airscope.git
+git clone https://github.com/ToySldr/airscope_v2.git
 cd airscope
 ```
 
@@ -185,12 +187,21 @@ flowchart TD
     O --> R["Attacks: deauth / beacon / auth / assoc frames"]
 ```
 
-**Why it works natively:** Linux gives userspace direct access to `/dev/bus/usb/*` through libusb (after a one-time udev rule). The kernel's own Wi-Fi stack is completely bypassed, so no monitor-mode driver is ever loaded. The chip's firmware is brought into the right state by airscope's own register-level code.
+**Why it works natively:** Linux gives userspace direct access to `/dev/bus/usb/*` through libusb (after a one-time udev rule). The kernel's own Wi-Fi stack is completely bypassed, so no monitor-mode driver is ever loaded. The chip's firmware is brought into the right state by airscope's own register-level code. This describes the **userspace PyUSB backend**; the validated Raspberry Pi 5 setup instead defaults to the **kernel-monitor backend** for the Realtek adapters (see "Capture backends" below).
 
 **Key components on Linux:**
 - `libusb` bulk transfers (read/write endpoints)
 - udev rule for device permissions (installed on first run with `pkexec`)
-- Optional DKMS driver *packages* in the repo document register maps; they are **not** required on the host
+- On the **userspace path**, the optional DKMS driver *packages* in the repo only document register maps and are **not** required on the host. (On the validated Raspberry Pi 5 kernel-monitor setup a DKMS driver **is** part of the install — see below.)
+
+### Capture backends: userspace vs kernel-monitor
+
+airscope has two capture backends:
+
+- **Userspace PyUSB backend** — the original, cross-platform default: airscope claims the USB device directly via libusb and runs the chip from its own register-level code, with no kernel monitor-mode driver loaded. This is the path the cross-platform claims above describe.
+- **Kernel-monitor backend** — the **validated default on the Raspberry Pi 5** for the Realtek **RTL8812AU (`0bda:8812`)** and **RTL8814AU (`0bda:8813`)** adapters: airscope captures **through the bound kernel driver** via `AF_PACKET`, with no USB detach. `AIRSCOPE_CAPTURE=pyusb` opts back into the userspace path, which on these adapters is **experimental and unsupported** in v0.3.9.
+
+On the Pi, the RTL8812AU needs a **DKMS-built patched `88XXau` module** for beacon reception and the RTL8814AU binds to the dedicated `8814au` driver. Installation, verification, the kernel-update hazard, and rollback for that configuration are in **`docs/DRIVER_INSTALL.md`** — follow it for the validated Pi setup.
 
 ### Windows: transparent WSL2
 
@@ -523,7 +534,7 @@ Captive-portal detection triggers the native popup on every OS: iOS/macOS (`/hot
 | Feature | airscope | aircrack-ng | airgeddon | Wifite |
 |---------|----------|-------------|-----------|--------|
 | **Platforms** | Linux + Windows + macOS | Linux only | Linux only | Linux only |
-| **Kernel driver required** | No | Yes (monitor mode) | Yes | Yes |
+| **Kernel driver required** | No (userspace path); yes on the validated Pi kernel-monitor backend | Yes (monitor mode) | Yes | Yes |
 | **External tools** | None | Many | Many | Many |
 | **Interface** | TUI + Web | CLI | CLI + xterm | CLI |
 | **EvilTwin** | Yes, 3-step with MIC verify | No | Yes (bash) | No |
@@ -626,7 +637,7 @@ airscope/
 - [docs/airscope-research-paper.pdf](docs/airscope-research-paper.pdf) — research-paper PDF (format: MDPI-style technical report)
 - [docs/THEMES.md](docs/THEMES.md) — theme customization
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, PR guidelines
-- [Landing page](https://udhaybhat00.github.io/airscope/) — feature overview and downloads (GitHub Pages)
+- [Landing page](https://github.com/ToySldr/airscope_v2/) — feature overview and downloads (GitHub Pages)
 
 ---
 
@@ -671,7 +682,7 @@ More: [docs/LINUX-PERMISSIONS.md](docs/LINUX-PERMISSIONS.md).
 
 ---
 
-[![Star History Chart](https://api.star-history.com/svg?repos=udhaybhat00/airscope&type=Date)](https://star-history.com/#udhaybhat00/airscope&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=ToySldr/airscope_v2&type=Date)](https://star-history.com/#ToySldr/airscope_v2&Date)
 
 ## License & Legal
 
@@ -696,5 +707,5 @@ More: [docs/LINUX-PERMISSIONS.md](docs/LINUX-PERMISSIONS.md).
 <p align="center">
   Built with care for the Wi-Fi security community.<br>
   Star this repo if it helped you! ⭐<br>
-  <a href="https://github.com/udhaybhat00/airscope">github.com/udhaybhat00/airscope</a>
+  <a href="https://github.com/ToySldr/airscope_v2">github.com/ToySldr/airscope_v2</a>
 </p>

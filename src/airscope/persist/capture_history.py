@@ -175,7 +175,7 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
         # (typically resolved from the parent directory name by load_capture_index's
         # _bssid_from_parent fallback). Create a minimal entry so the capture is
         # still visible in airscope instead of being silently dropped.
-        if bssid:
+        if bssid and path.suffix.lower() in {'.cap', '.pcap', '.pcapng', '.hc22000', '.22000'}:
             return [PersistedCapture(type=CaptureType.HS, timestamp=0,
                                      path=str(path), bssid=bssid, ssid=None,
                                      record_count=0)]
@@ -199,8 +199,17 @@ def _parse_file(path: Path, bssid: str) -> List[PersistedCapture]:
         return [PersistedCapture(type=CaptureType.WPS_PBC, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
     if kind == "cracked" and ext == "txt":
+        text = _read_text(path)
+        if text is None:
+            return []
+        lines = text.splitlines()
+        stored_ssid = next((line[6:] for line in lines if line.startswith("SSID: ")), ssid)
+        stored_bssid = next((line[7:] for line in lines if line.startswith("BSSID: ")), bssid)
+        if stored_bssid.casefold() != bssid.casefold():
+            return []
+        value = next((line[5:] for line in lines if line.startswith("PSK: ")), None)
         return [PersistedCapture(type=CaptureType.CRACKED, timestamp=epoch, path=str(path),
-                                 bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
+                                 bssid=bssid, value=value, ssid=stored_ssid)]
     if kind == "eviltwin_psk" and ext == "txt":
         return [PersistedCapture(type=CaptureType.EVILTWIN_PSK, timestamp=epoch, path=str(path),
                                  bssid=bssid, value=_read_wps_psk(path), ssid=ssid)]
@@ -229,7 +238,7 @@ def _resolve_captures_dir() -> Path:
     existing captures instead of silently returning an empty index.
     """
     configured = Path(Config.captures_dir)
-    if configured.is_dir():
+    if configured.is_absolute() or configured.is_dir():
         return configured
     # Resolve relative to known project roots.
     candidates: list[Path] = []
@@ -237,13 +246,12 @@ def _resolve_captures_dir() -> Path:
         for base in (Path.home(), Path.cwd()):
             candidates.append(base / configured)
             candidates.append(base / "Projects" / "wifi-collector" / str(configured))
-    # Absolute but missing — try sibling dirs.
     candidates.append(Path.home() / "Projects" / "wifi-collector" / "captures")
     for c in candidates:
         if c.is_dir():
             logger.debug("capture_history: captures_dir resolved to %s (fallback)", c)
             return c
-    # Nothing found — return the configured path so callers see it didn't exist.
+    # Nothing found - return the configured path so callers see it didn't exist.
     return configured
 
 
@@ -275,13 +283,15 @@ def load_capture_index() -> Dict[str, List[PersistedCapture]]:
     root = _resolve_captures_dir()
     if not root.is_dir():
         logger.warning(
-            "capture_history: captures directory %r does not exist — "
+            "capture_history: captures directory %r does not exist - "
             "no saved captures will be shown. Check airscope config.", str(root))
         return {}
     # Use rglob so captures stored by v14.py in per-AP subdirectories
     # (e.g. SSID_BSSID/SSID_BSSID_timestamp_handshake.pcap) are also found,
     # not just airscope's own flat-layout files at the top level.
     for path in root.rglob("*"):
+        if any(part.startswith(".airscope-") for part in path.relative_to(root).parts):
+            continue
         if not path.is_file():
             continue
         bssid: str | None = None

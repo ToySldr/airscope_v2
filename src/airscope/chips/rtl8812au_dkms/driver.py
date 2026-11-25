@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Callable, ClassVar, List, Optional
 
 import usb.core
@@ -53,6 +54,36 @@ CHANNELS_5G = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124
 # Scan set excludes the DFS band (52-144): passive-scan-only, radar-shared, home APs avoid it.
 # set_channel + verify_channels still drive the full CHANNELS_5G above, byte-for-byte vs the capture.
 CHANNELS_5G_NON_DFS = [36, 40, 44, 48, 149, 153, 157, 161, 165]
+
+# Kernel drivers whose USB-interface detach is known to hang THIS host: the out-of-tree Realtek
+# 88XXau (shared 8812/8814 vendor module) has a buggy disconnect (rtw_dev_remove) with no
+# pre_reset/post_reset, so detach_kernel_driver(0) can block in uninterruptible kernel sleep --
+# and NO Python/asyncio timeout can interrupt a thread stuck in that ioctl. AirScope refuses to
+# drive the detach on these and tells the operator to free the device out-of-band (unload or
+# blacklist the module + replug) first. See INTEGRATION_AUDIT / setup/usb_reset.py.
+_HANG_PRONE_KERNEL_DRIVERS = frozenset({"rtl88XXau"})
+_SYS_USB_DEVICES = Path("/sys/bus/usb/devices")
+
+
+def _bound_kernel_driver(bus: int, address: int, *,
+                         usb_devices: Path = _SYS_USB_DEVICES) -> Optional[str]:
+    """Kernel driver bound to interface :1.0 of the USB device at (bus, address), from sysfs, or
+    None if unbound / unresolvable. Decides only whether a detach is safe -- it never detaches."""
+    try:
+        for root in usb_devices.iterdir():
+            busnum, devnum = root / "busnum", root / "devnum"
+            if not busnum.exists() or not devnum.exists():
+                continue
+            try:
+                if int(busnum.read_text()) != bus or int(devnum.read_text()) != address:
+                    continue
+            except (OSError, ValueError):
+                continue
+            driver = root / f"{root.name}:1.0" / "driver"
+            return driver.resolve().name if driver.is_symlink() else None
+    except OSError:
+        return None
+    return None
 
 
 class Rtl8812auDkmsDriver(Driver):
@@ -99,11 +130,29 @@ class Rtl8812auDkmsDriver(Driver):
         equivalent that frees the device from the kernel rtw88/rtl8xxxu driver."""
         dev = self.transport.dev
         try:
-            if dev.is_kernel_driver_active(0):
-                dev.detach_kernel_driver(0)
-                logger.info("detached kernel driver from interface 0")
+            active = dev.is_kernel_driver_active(0)
         except (NotImplementedError, usb.core.USBError) as e:
-            logger.debug("kernel-driver detach skipped: %s", e)
+            logger.debug("kernel-driver active check skipped: %s", e)
+            active = False
+        if active:
+            # SAFETY: never drive detach_kernel_driver(0) on a driver whose disconnect hangs this
+            # host. A blocked detach ioctl sits in uninterruptible kernel sleep and no asyncio or
+            # thread timeout can cancel it, so fail CLOSED with actionable guidance rather than
+            # wedging the Pi. This does NOT replace the device-manager binding gate; it is a
+            # second, driver-level guard.
+            bound = _bound_kernel_driver(dev.bus, dev.address)
+            if bound in _HANG_PRONE_KERNEL_DRIVERS:
+                raise BringUpError(
+                    "claim",
+                    f"refusing to detach kernel driver '{bound}' from interface 0: its USB "
+                    f"disconnect is known to hang this host and no timeout can interrupt a "
+                    f"blocked detach. Unload or blacklist '{bound}' (and replug the adapter) "
+                    f"before launching AirScope.")
+            try:
+                dev.detach_kernel_driver(0)
+                logger.info("detached kernel driver '%s' from interface 0", bound or "?")
+            except (NotImplementedError, usb.core.USBError) as e:
+                logger.debug("kernel-driver detach skipped: %s", e)
         try:
             dev.set_configuration()
         except usb.core.USBError as e:

@@ -534,13 +534,16 @@ class HeadlessContext:
 
     # ----- crack jobs (Phase 2) ----------------------------------------------
 
-    async def start_crack(self, path: str, wordlist: str) -> dict:
+    async def start_crack(self, path: str, wordlist: str = "") -> dict:
         """Launch a dictionary crack on one vault capture; demo simulates it."""
         from pathlib import Path as _Path
         cap = next((c for c in self.vault.all_captures() if c.path == path), None)
         if cap is None:
             raise _NoTarget(path)
-        if not _Path(wordlist).is_file():
+        if not wordlist.strip():
+            from airscope.crack.external import find_wordlist
+            wordlist = str(find_wordlist() or "")
+        if not wordlist or not _Path(wordlist).is_file():
             raise _Blocked(f"wordlist not found: {wordlist}")
         self._crack_seq += 1
         job = {"id": f"crack-{self._crack_seq}", "path": path, "wordlist": wordlist,

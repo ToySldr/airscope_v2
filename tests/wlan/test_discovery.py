@@ -19,6 +19,14 @@ def _fresh_registry():
     manager.supported_ids.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def _force_pyusb_backend(monkeypatch):
+    # This file exercises the PyUSB driver registry + the per-chip mainline/DKMS env switch. The
+    # kernel-monitor backend is now the DEFAULT for 0bda:8812/8813, so pin the PyUSB backend here to
+    # resolve those pairs to the chip drivers under test (other adapters are unaffected by the var).
+    monkeypatch.setenv("AIRSCOPE_CAPTURE", "pyusb")
+
+
 def _driver_for(vid, pid):
     cls, _ = manager.driver_for(vid, pid)
     return cls.__name__

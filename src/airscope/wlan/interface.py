@@ -19,6 +19,14 @@ from airscope.dot11.mac import str_to_mac, mac_to_str, random_client_mac
 
 logger = logging.getLogger(__name__)
 
+# Channel-hop resilience. A transient USB tune error (a control-transfer timeout / IO / stall,
+# realistic on this USB-power-flaky Pi) must NOT silently stop the scan. Retry the channel a
+# bounded number of times, then skip it and keep hopping so the card self-heals when the fault
+# clears; only a physically-gone device is terminal.
+_HOP_PER_CHANNEL_RETRIES = 2
+_HOP_RETRY_BACKOFF_S = 0.2
+_HOP_STALL_BACKOFF_S = 2.0
+
 
 @dataclass
 class DeauthResult:
@@ -306,22 +314,61 @@ class WlanInterface:
         import itertools
         channel_cycle = itertools.cycle(channels)
         last_channel = None
+        consecutive_failures = 0
         while self._is_hopping:
             channel = next(channel_cycle)
             # Skip re-tuning the channel we're already on.
-            if channel != last_channel:
-                # Shield the tune
-                self._tune_task = asyncio.ensure_future(
-                    self.set_channel(channel, scan=True)
-                )
-                try:
-                    await asyncio.shield(self._tune_task)
-                except Exception as e:
-                    if is_device_gone(e):
-                        self._on_device_lost(e)
-                    break
+            if channel == last_channel:
+                await asyncio.sleep(interval)
+                continue
+            outcome = await self._tune_for_hop(channel)
+            if outcome is None:
+                # Device physically gone -- terminal (already reported via _on_device_lost).
+                return
+            if outcome:
                 last_channel = channel
-            await asyncio.sleep(interval)
+                consecutive_failures = 0
+                await asyncio.sleep(interval)
+                continue
+            # Transient tune failure: recover by moving on to the next channel instead of
+            # silently freezing on this one. Keep hopping so the card self-heals when the
+            # fault clears.
+            consecutive_failures += 1
+            if consecutive_failures == len(channels):
+                logger.error(
+                    "%s hop: every channel failed to tune once (%d consecutive); the adapter "
+                    "may be wedged -- backing off and continuing to retry (not stopping)",
+                    self._chipset, consecutive_failures)
+            backoff = (_HOP_STALL_BACKOFF_S if consecutive_failures >= len(channels)
+                       else _HOP_RETRY_BACKOFF_S)
+            await asyncio.sleep(backoff)
+
+    async def _tune_for_hop(self, channel: int) -> Optional[bool]:
+        """Tune for one scan hop with bounded retries. Returns True on success, False on a
+        transient failure (the caller skips the channel and keeps hopping), or None if the
+        device is physically gone (terminal). A transient fault never propagates out of here --
+        that swallow-and-``break`` was the silent-stop bug this replaces."""
+        for attempt in range(_HOP_PER_CHANNEL_RETRIES + 1):
+            if not self._is_hopping:
+                return False
+            self._tune_task = asyncio.ensure_future(self.set_channel(channel, scan=True))
+            try:
+                await asyncio.shield(self._tune_task)
+                return True
+            except asyncio.CancelledError:
+                raise  # stop_hopping cancelled us -- propagate so the loop unwinds cleanly
+            except Exception as e:  # noqa: BLE001 -- a tune fault must not kill the hop loop
+                if is_device_gone(e):
+                    logger.warning("%s hop: device gone tuning ch%d: %s",
+                                   self._chipset, channel, e)
+                    self._on_device_lost(e)
+                    return None
+                logger.warning("%s hop: transient error tuning ch%d (attempt %d/%d): %s",
+                               self._chipset, channel, attempt + 1,
+                               _HOP_PER_CHANNEL_RETRIES + 1, e)
+                if attempt < _HOP_PER_CHANNEL_RETRIES:
+                    await asyncio.sleep(_HOP_RETRY_BACKOFF_S)
+        return False
 
     async def stop_hopping(self):
         """Cancel the hopping task, then drain any in-flight tune."""

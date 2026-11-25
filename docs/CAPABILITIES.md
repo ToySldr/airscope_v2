@@ -220,7 +220,7 @@ airscope is a Wi-Fi security auditing tool that provides the following capabilit
 airscope uses **zero external subprocesses** for core attacks. All implementation is pure Python:
 
 - ✅ No shell-outs to aircrack-ng, aireplay-ng, hostapd, dnsmasq, reaver
-- ✅ No kernel module loading (modprobe/airmon-ng)
+- ✅ No kernel module loading on the userspace path (modprobe/airmon-ng); the validated Raspberry Pi 5 uses a kernel-monitor backend — see DRIVER_INSTALL.md
 - ❌ No external binary dependencies
 
 **Exception**: Web dashboard uses uvicorn HTTP server library call.
@@ -229,7 +229,7 @@ airscope uses **zero external subprocesses** for core attacks. All implementatio
 
 ## Supported Hardware
 
-See [docs/SUPPORTED-HARDWARE.md](../../docs/SUPPORTED-HARDWARE.md) for complete list.
+See [docs/SUPPORTED-HARDWARE.md](SUPPORTED-HARDWARE.md) for complete list.
 
 ### Chipset Support Matrix
 

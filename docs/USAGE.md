@@ -1,4 +1,4 @@
-# USAGE - airoscpe v0.3.8
+# USAGE - airscope v0.3.9
 
 ## Prerequisites and Installation
 
@@ -14,7 +14,7 @@
 
 #### Step 1: Clone the repository
 ```bash
-git clone https://github.com/udhaybhat00/airscope.git
+git clone https://github.com/ToySldr/airscope_v2.git
 cd airscope
 ```
 
@@ -49,7 +49,7 @@ uv run python -m airscope.doctor   # Pre-flight check
 
 ---
 
-## Running airoscpe
+## Running airscope
 
 ### Interactive Mode (TUI) - Most Common
 
@@ -363,7 +363,7 @@ Shows all connected USB devices with VID:PID and manufacturer/product strings.
 
 **First-run setup**:
 1. Install udev rule for `/dev/bus/usb` access (via `pkexec`)
-2. No kernel driver loading required - pure userspace via libusb
+2. No kernel driver loading on the userspace path (pure userspace via libusb); the validated Raspberry Pi 5 uses a kernel-monitor backend — see DRIVER_INSTALL.md
 
 ### Windows
 
@@ -449,5 +449,5 @@ http://<your-ip>:8000
 ## Support
 
 - **Documentation**: See [docs/](./) directory
-- **Issue tracker**: https://github.com/udhaybhat00/airscope/issues
-- **Supported hardware**: See [docs/SUPPORTED-HARDWARE.md](../../docs/SUPPORTED-HARDWARE.md)
+- **Issue tracker**: https://github.com/ToySldr/airscope_v2/issues
+- **Supported hardware**: See [docs/SUPPORTED-HARDWARE.md](SUPPORTED-HARDWARE.md)
