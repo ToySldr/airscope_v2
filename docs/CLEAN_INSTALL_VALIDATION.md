@@ -21,7 +21,7 @@ Report only **aggregate** results (counts) — no real SSIDs, BSSIDs, or capture
 
 ## 1. Checkout + environment
 ```
-git clone <repo> airscope && cd airscope && git checkout 56c794b
+git clone https://github.com/ToySldr/airscope_v2.git airscope && cd airscope && git checkout 56c794b
 uv sync --frozen            # or: uv sync
 ```
 **Pass:** checkout at `56c794b`; `uv sync` succeeds.
