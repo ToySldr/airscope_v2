@@ -227,7 +227,7 @@ Control Flow (RX Frame Path, TX Frame Path)
 ```bash
 # Installation
 git clone https://github.com/ToySldr/airscope_v2.git
-cd airscope
+cd airscope_v2
 uv sync --group dev      # or: pip install -e .
 
 # Running

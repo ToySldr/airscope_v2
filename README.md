@@ -111,7 +111,7 @@ airscope reinvents the stack from the USB endpoint up:
 
 ```bash
 git clone https://github.com/ToySldr/airscope_v2.git
-cd airscope
+cd airscope_v2
 ```
 
 ### Step 2: Install
@@ -634,10 +634,8 @@ airscope/
 - [docs/FIRMWARE.md](docs/FIRMWARE.md) — firmware loading
 - [docs/ACKS.md](docs/ACKS.md) — ACK/retry architecture
 - [docs/STORY.md](docs/STORY.md) — the handwritten story: why, how, and what it can't do
-- [docs/airscope-research-paper.pdf](docs/airscope-research-paper.pdf) — research-paper PDF (format: MDPI-style technical report)
 - [docs/THEMES.md](docs/THEMES.md) — theme customization
 - [CONTRIBUTING.md](CONTRIBUTING.md) — dev setup, PR guidelines
-- [Landing page](https://github.com/ToySldr/airscope_v2/) — feature overview and downloads (GitHub Pages)
 
 ---
 

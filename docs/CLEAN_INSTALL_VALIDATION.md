@@ -15,16 +15,16 @@ Pi, because `dkms install`, module loading, and reboots are disruptive.
 | Kernel | `uname -r` → record (patch validated against `6.12.34+rpt-rpi-2712`) |
 | Adapters | Alfa AWUS036ACH (RTL8812AU `0bda:8812`) + Alfa AWUS1900 (RTL8814AU `0bda:8813`) |
 | Power | Stable **mains** power (not battery); under-voltage alarm clear |
-| Baseline | `airscope-rc @ 56c794b` |
+| Baseline | `release/v0.3.9` (fork branch tip) |
 
 Report only **aggregate** results (counts) — no real SSIDs, BSSIDs, or captures.
 
 ## 1. Checkout + environment
 ```
-git clone https://github.com/ToySldr/airscope_v2.git airscope && cd airscope && git checkout 56c794b
+git clone https://github.com/ToySldr/airscope_v2.git airscope && cd airscope && git checkout release/v0.3.9
 uv sync --frozen            # or: uv sync
 ```
-**Pass:** checkout at `56c794b`; `uv sync` succeeds.
+**Pass:** on `release/v0.3.9`; `uv sync` succeeds.
 
 ## 2. DKMS installation (patched 88XXau + stock 8814au)
 Non-destructive pre-check first (builds in /tmp, installs nothing):

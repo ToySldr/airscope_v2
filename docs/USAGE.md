@@ -15,7 +15,7 @@
 #### Step 1: Clone the repository
 ```bash
 git clone https://github.com/ToySldr/airscope_v2.git
-cd airscope
+cd airscope_v2
 ```
 
 #### Step 2: Install dependencies
@@ -108,7 +108,7 @@ uv run airscope --web --host 0.0.0.0 --port 8080
 | Flag | Description |
 |------|-------------|
 | `--host HOST` | Bind address (default: 127.0.0.1) |
-| `--port PORT` | Port number (default: 8000) |
+| `--port PORT` | Port number (default: 8765) |
 | `--demo` | Run with simulated data (no hardware needed) |
 | `--no-browser` | Suppress automatic browser opening |
 
@@ -167,39 +167,60 @@ uv run airscope --export all      # All formats to default directory
 - **Arrow keys**: Navigate credential list
 - **Enter**: View capture details
 - **E**: Export selected capture
+- **Validate All**: Re-check every indexed capture for a usable handshake/PMKID
+- **Clean Empty**: Move confidently-empty handshake captures to a recoverable `quarantine-no-wpa/` folder (never deletes — see [RETENTION.md](RETENTION.md))
+- Recovered PSKs are masked (`********`) with a per-row **Show/Hide** toggle
 
 ### Preferences Modal
-- **Theme**: Select UI theme (midnight default)
+- **Theme**: Select UI theme (default: airscope-noir)
 - **Log level**: trace/debug/info/quiet (null = auto-detect)
 
 ---
 
 ## Configuration
 
-### Config File: `~/.airscope/config.json`
+### Config File: `config.toml`
 
-```json
-{
-  "theme": "midnight",
-  "log_level": null,
-  "pbc_enabled": true,
-  "silenced_ap_bssids": []
-}
+Settings are normally changed in the **Preferences** modal (Ctrl+P), which writes a TOML file in your
+OS user-config directory (Linux: `~/.config/airscope/config.toml`). You can also edit it directly:
+
+```toml
+theme = "airscope-noir"        # airscope-noir | airscope-noir-contrast | airscope-green-dark
+captures_dir = "captures"      # where captures are written (relative paths resolve to absolute)
+save_pcap = true               # also keep the raw .pcap alongside hashes
+wordlist_path = ""             # cracking dictionary; blank = bundled RockYou
+log_level = "info"             # trace | debug | info | quiet
+scanner_sort = "signal"        # signal | channel | bssid
+scanner_sort_reverse = true
+scanner_sort_delay = 2.0       # seconds between live scanner re-sorts
+silenced_bssids = []           # BSSIDs to skip
 ```
 
 **Settings**:
-| Key | Type | Description |
-|-----|------|-------------|
-| `theme` | string | UI theme name |
-| `log_level` | string/null | verbosity: trace/debug/info/quiet/null |
-| `pbc_enabled` | bool | Enable PBC toggle in scanner |
-| `silenced_ap_bssids` | list | BSSIDs to skip in attacks |
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `theme` | string | `"airscope-noir"` | UI theme (`airscope-noir`, `airscope-noir-contrast`, `airscope-green-dark`) |
+| `captures_dir` | string | `"captures"` | Capture output directory |
+| `save_pcap` | bool | `true` | Keep the raw `.pcap` alongside extracted hashes |
+| `wordlist_path` | string | `""` | Global cracking dictionary; blank = bundled RockYou |
+| `log_level` | string | `"info"` | Log verbosity: trace/debug/info/quiet |
+| `scanner_sort` | string | `"signal"` | Scanner sort column: signal/channel/bssid |
+| `scanner_sort_reverse` | bool | `true` | Reverse the scanner sort |
+| `scanner_sort_delay` | float | `2.0` | Seconds between live scanner re-sorts |
+| `silenced_bssids` | list | `[]` | BSSIDs to skip |
 
 ### Environment Variables
+
+On the validated Raspberry Pi 5 the **kernel-monitor backend is the default** for the Realtek
+RTL8812AU (`0bda:8812`) and RTL8814AU (`0bda:8813`) and needs no configuration. The userspace PyUSB
+path and the RTL8814AU USB handover below are **experimental/unsupported** opt-ins, never triggered
+automatically.
 
 | Variable | Purpose |
 |----------|---------|
 | `AIRSCOPE_LOG` | Override log level (trace/debug/info/quiet) |
+| `AIRSCOPE_CAPTURE` | Capture backend: `kernel` (default, validated) or `pyusb` (legacy userspace — experimental/unsupported) |
+| `AIRSCOPE_8814_USB_HANDOVER` | Set to `1` to opt into the RTL8814AU USB handover (experimental/unsupported; off by default) |
 | `AIRSCOPE_IN_VM` | Internal: indicates re-exec in VM context |
 | `AIRSCOPE_RTL8188` | RTL8188EU: "mainline" for mainline driver |
 | `AIRSCOPE_RTL8812` | RTL8812AU: "mainline" for mainline driver |
@@ -336,10 +357,8 @@ Interactive web interface showing all captured data.
 # Per-run:
 AIRSCOPE_LOG=debug uv run airscope
 
-# Or edit config.json:
-{
-  "log_level": "trace"
-}
+# Or edit config.toml:
+log_level = "trace"
 ```
 
 ### Log File Location
@@ -425,10 +444,10 @@ uv run airscope --auto \
 
 ```bash
 # Start web server (no browser)
-uv run airscope --web --host 0.0.0.0 --port 8000 --no-browser
+uv run airscope --web --host 0.0.0.0 --port 8765 --no-browser
 
 # Access from another machine:
-http://<your-ip>:8000
+http://<your-ip>:8765
 ```
 
 ---
