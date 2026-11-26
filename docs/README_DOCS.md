@@ -1,4 +1,4 @@
-# Documentation Index - airoscpe
+# Documentation Index - airscope
 
 This directory contains comprehensive documentation for the airscope Wi-Fi security auditing tool.
 
@@ -44,7 +44,7 @@ This directory contains comprehensive documentation for the airscope Wi-Fi secur
 
 ### Linux
 - See [LINUX-PERMISSIONS.md](./LINUX-PERMISSIONS.md) for udev rule setup
-- No kernel driver loading required - pure userspace via libusb
+- No kernel driver loading on the userspace path (pure userspace via libusb); the validated Raspberry Pi 5 uses a kernel-monitor backend — see DRIVER_INSTALL.md
 
 ### Windows
 - Requires WSL2 with USB passthrough
@@ -65,9 +65,9 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) in the main repo for:
 
 ## Support
 
-- **Issue tracker**: https://github.com/udhaybhat00/airscope/issues
+- **Issue tracker**: https://github.com/ToySldr/airscope_v2/issues
 - **Supported hardware**: See [SUPPORTED-HARDWARE.md](./SUPPORTED-HARDWARE.md)
 
 ---
 
-**Note**: All documentation in this directory is generated from the actual source code. If you find discrepancies, please file an issue with the specific file and line number.
+**Note**: The documentation in this directory is maintained by hand in this repository (there is no automatic doc generator). If you find a discrepancy with the source code, please file an issue with the specific file and line number.

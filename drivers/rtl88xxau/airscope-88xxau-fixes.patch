@@ -1,0 +1,49 @@
+--- /usr/src/realtek-rtl88xxau-5.6.4.2~git20250330.c3fb89a/include/hal_data.h	2025-03-30 09:53:36.000000000 -0400
++++ include/hal_data.h	2026-11-23 13:01:44.043039497 -0500
+@@ -371,6 +371,7 @@
+ 	u16				BasicRateSet;
+ 	u32				ReceiveConfig;
+ 	u32				rcr_backup; /* used for switching back from monitor mode */
++	u16				rxfltmap0_backup; /* mgmt RX filter map, saved on monitor entry (airscope beacon-RX fix) */
+ 	u8				rx_tsf_addr_filter_config; /* for 8822B/8821C USE */
+ 	BOOLEAN			bSwChnl;
+ 	BOOLEAN			bSetChnlBW;
+--- /usr/src/realtek-rtl88xxau-5.6.4.2~git20250330.c3fb89a/hal/rtl8812a/rtl8812a_hal_init.c	2025-03-30 09:53:36.000000000 -0400
++++ hal/rtl8812a/rtl8812a_hal_init.c	2026-11-23 13:01:44.243042536 -0500
+@@ -4183,6 +4183,13 @@
+ 		value_rxfltmap2 = 0xFFFF;
+ 		rtw_write16(Adapter, REG_RXFLTMAP2, value_rxfltmap2);
+ 
++		/* Receive all management frames incl. beacons: the chip-default
++		 * REG_RXFLTMAP0 is 0x0000, which drops beacons (mgmt subtype 8) in
++		 * monitor mode. Save it and open the mgmt subtype map; it is restored
++		 * in hw_var_set_opmode() when leaving monitor. (airscope beacon-RX fix) */
++		pHalData->rxfltmap0_backup = rtw_read16(Adapter, REG_RXFLTMAP0);
++		rtw_write16(Adapter, REG_RXFLTMAP0, 0xFFFF);
++
+ #if 0
+ 		/* tx pause */
+ 		rtw_write8(padapter, REG_TXPAUSE, 0xFF);
+@@ -4205,6 +4212,8 @@
+ 		/* reset RCR from backup */
+ 		rtw_hal_set_hwreg(Adapter, HW_VAR_RCR, (u8 *)&pHalData->rcr_backup);
+ 		rtw_hal_rcr_set_chk_bssid(Adapter, MLME_ACTION_NONE);
++		/* restore mgmt RX filter map saved on monitor entry (airscope beacon-RX fix) */
++		rtw_write16(Adapter, REG_RXFLTMAP0, pHalData->rxfltmap0_backup);
+ 		isMonitor = _FALSE;
+ 	}
+ 
+--- /usr/src/realtek-rtl88xxau-5.6.4.2~git20250330.c3fb89a/os_dep/linux/usb_intf.c	2025-03-30 09:53:36.000000000 -0400
++++ os_dep/linux/usb_intf.c	2026-11-23 14:03:00.479152204 -0500
+@@ -214,7 +214,10 @@
+ #endif
+ 
+ #ifdef CONFIG_RTL8814A
+-	{USB_DEVICE(USB_VENDER_ID_REALTEK, 0x8813), .driver_info = RTL8814A},
++	/* airscope: 0bda:8813 (Alfa AWUS1900 / RTL8814AU) intentionally NOT listed here, so it
++	 * binds to the dedicated 8814au driver, which is stable in simultaneous monitor. 88XXau's
++	 * 8814a monitor path intermittently drops beacons. Removing only this ID keeps all 8812
++	 * support (and the other RTL8814A vendor IDs below, none present on this rig). */
+ 	{USB_DEVICE(0x0B05, 0x1817), .driver_info = RTL8814A}, /* ASUS - ASUSTeK */
+ 	{USB_DEVICE(0x0B05, 0x1852), .driver_info = RTL8814A}, /* ASUS - ASUSTeK */
+ 	{USB_DEVICE(0x0B05, 0x1853), .driver_info = RTL8814A}, /* ASUS - ASUSTeK */

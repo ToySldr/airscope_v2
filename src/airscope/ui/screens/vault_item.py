@@ -8,8 +8,10 @@ work goes through app.vault.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Dict, List, Optional
 
 from rich.markup import escape
@@ -22,11 +24,16 @@ from textual.events import Event
 from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
+from textual.worker import Worker, WorkerState
 from textual.widgets import Button, Input, Label, Select
 
+from airscope.ui.job_status import VaultJobStatus
 from airscope.models import CaptureType, PersistedCapture
 from airscope.crack import external as crack_ext
 from airscope.persist.common import bssid_to_dashed
+from airscope.persist.capture_validation import PACKET_SUFFIXES, validate_selected_capture
+
+_crack_log = logging.getLogger("airscope.vault.crack")
 
 # (title, kinds) per panel, in display order. HS and PMKID share one panel.
 _PANELS: list[tuple[str, tuple[CaptureType, ...]]] = [
@@ -219,7 +226,7 @@ class _CapturePanel(VerticalGroup):
     _CapturePanel .modified { height: 1; margin-bottom: 1; }
     _CapturePanel .field { height: 1; align: left middle; }
     _CapturePanel .fval { width: 1fr; height: 1; }
-    _CapturePanel .field .copy { height: 1; min-width: 8; border: none; }
+    _CapturePanel .field Button { width: auto; height: 1; min-width: 8; border: none; }
     _CapturePanel .actions { height: auto; align: left middle; }
     _CapturePanel .actions Button { margin-right: 1; }
     _CapturePanel .crack-progress { height: auto; color: $text-muted; margin-top: 1; }
@@ -235,9 +242,12 @@ class _CapturePanel(VerticalGroup):
         self._files = list(self._by_path.values())
         self._show_consolidate = show_consolidate
         self._crackable = bool({c.type for c in self._files} & {CaptureType.HS, CaptureType.PMKID})
+        self._status = None
         self._crack_worker = None
         self._crack_pending: Optional[tuple] = None
         self._crack_tool = ""
+        self._password_visible = False
+        self._validation_request = 0
 
     def compose(self) -> ComposeResult:
         self.border_title = f"{self._title} ({len(self._files)})"
@@ -250,18 +260,23 @@ class _CapturePanel(VerticalGroup):
             for flabel, fkey in fields:
                 with Horizontal(classes="field"):
                     yield Label(self._field_text(newest, flabel, fkey), classes=f"fval fval-{fkey}")
+                    if fkey == "psk":
+                        yield Button("Show", classes="toggle-password")
                     yield Button("Copy", classes=f"copy copy-{fkey}")
         else:
             yield Label(Text.from_markup(self._detail_markup(newest)), classes="detail")
         with Horizontal(classes="actions"):
             if not fields:
-                yield Button("Copy", classes="copy copy-payload")
+                yield Button("Copy", classes="copy copy-payload",
+                             disabled=Path(newest.path).suffix.lower() in PACKET_SUFFIXES)
             if self._crackable:
+                yield Button("Validate", classes="validate")
                 yield Button("Crack", classes="crack")
             yield Button("Delete", "error", classes="delete")
             if self._show_consolidate and self.app.vault.legacy_hc_file_count():
                 yield Button("Consolidate", "warning", classes="consolidate")
         if self._crackable:
+            yield Label("", classes="validation-progress")
             yield Label("", classes="crack-progress")
 
     # ----- rendering -----
@@ -274,10 +289,11 @@ class _CapturePanel(VerticalGroup):
         when = datetime.fromtimestamp(cap.timestamp).strftime("%Y-%m-%d %H:%M")
         return Text.from_markup(f"[dim]Modified:[/dim] {when}")
 
-    @staticmethod
-    def _field_text(cap: PersistedCapture, flabel: str, fkey: str) -> Text:
+    def _field_text(self, cap: PersistedCapture, flabel: str, fkey: str) -> Text:
         val = _field_value(cap, fkey)
         shown = escape(val) if val else "[dim](none)[/dim]"
+        if val and fkey == "psk" and not self._password_visible:
+            shown = "********"
         return Text.from_markup(f"[dim]{escape(flabel)}:[/dim] {shown}")
 
     def _detail_markup(self, cap: PersistedCapture) -> str:
@@ -287,8 +303,8 @@ class _CapturePanel(VerticalGroup):
             detail = (f"[dim]{pairs} (Dragonfly commit+confirm)[/dim]\n"
                       f"[dim]Convert: hcxpcapngtool -o out.hc22000 {escape(Path(cap.path).name)}[/dim]\n"
                       f"[dim]Crack: hashcat -m 22000 out.hc22000 wordlist[/dim]")
-        elif cap.path.endswith(".pcap"):
-            detail = "[dim]raw .pcap capture[/dim]"
+        elif Path(cap.path).suffix.lower() in PACKET_SUFFIXES:
+            detail = "[dim]Raw packet capture[/dim]"
         else:
             detail = self._hc_summary(cap)
         return f"[dim]Modified:[/dim] {when}\n{detail}"
@@ -306,8 +322,28 @@ class _CapturePanel(VerticalGroup):
 
     # ----- events -----
 
+    def hide_password(self) -> None:
+        if self._password_visible:
+            self._set_password_visible(False)
+
+    def _set_password_visible(self, visible: bool) -> None:
+        self._password_visible = visible
+        cap = self._selected()
+        if cap is not None:
+            self.query_one(".fval-psk", Label).update(self._field_text(cap, "PSK", "psk"))
+            self.query_one(".toggle-password", Button).label = "Hide" if visible else "Show"
+
+    @on(Button.Pressed, ".toggle-password")
+    def _toggle_password(self, event: Button.Pressed) -> None:
+        event.stop()
+        self._set_password_visible(not self._password_visible)
+
     @on(Select.Changed)
     def _file_changed(self, event: Select.Changed) -> None:
+        self.hide_password()
+        self._validation_request += 1
+        if self._crackable:
+            self.query_one(".validation-progress", Label).update("")
         cap = self._by_path.get(event.value)
         if cap is None:
             return
@@ -318,6 +354,34 @@ class _CapturePanel(VerticalGroup):
                 self.query_one(f".fval-{fkey}", Label).update(self._field_text(cap, flabel, fkey))
         else:
             self.query_one(".detail", Label).update(Text.from_markup(self._detail_markup(cap)))
+            self.query_one(".copy-payload", Button).disabled = (
+                Path(cap.path).suffix.lower() in PACKET_SUFFIXES
+            )
+
+    @on(Button.Pressed, ".validate")
+    def _validate_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        selected = self._selected()
+        if selected is None:
+            return
+        self.query_one(".validation-progress", Label).update("Inspecting capture...")
+        self._validation_request += 1
+        self.run_worker(self._validate_selected(selected, self._validation_request),
+                        group="capture-validation", exclusive=True)
+
+    async def _validate_selected(self, selected: PersistedCapture, request: int) -> None:
+        try:
+            result = await asyncio.to_thread(
+                validate_selected_capture, Path(selected.path), selected.bssid
+            )
+        except Exception as exc:
+            result = f"Validation error: {type(exc).__name__}: {exc}"
+        if request != self._validation_request:
+            return
+        try:
+            self.query_one(".validation-progress", Label).update(Text(result))
+        except Exception:
+            pass  # The user may have navigated away while validation ran.
 
     @on(Button.Pressed, ".copy")
     def _copy(self, event: Button.Pressed) -> None:
@@ -342,20 +406,24 @@ class _CapturePanel(VerticalGroup):
         event.stop()
         cap = self._selected()
         if cap is None:
+            self.notify("Select a capture file first", severity="warning")
             return
-
+        name = Path(cap.path).name
         def after(confirmed: bool | None) -> None:
             if not confirmed:
                 return
             try:
                 self.app.vault.delete_capture(cap)
-            except OSError as exc:
-                self.notify(f"Could not remove {Path(cap.path).name}: {exc}", severity="error")
+            except (OSError, ValueError) as exc:
+                self.notify(f"DELETE FAILED: {name}: {exc}", severity="error", timeout=15)
+                self.post_message(VaultItemView.CapturesChanged())
                 return
-            self.notify(f"Removed {Path(cap.path).name}")
+            self.notify(f"Deleted and verified: {name}", title="File removed", timeout=12)
             self.post_message(VaultItemView.CapturesChanged())
+        self.app.push_screen(ConfirmModal(
+            f"Permanently delete this file?\n[bold]{escape(name)}[/]\n"
+            "This cannot be undone."), after)
 
-        self.app.push_screen(ConfirmModal(f"Delete [bold]{escape(Path(cap.path).name)}[/]?"), after)
 
     @on(Button.Pressed, ".consolidate")
     def _consolidate(self, event: Button.Pressed) -> None:
@@ -378,8 +446,15 @@ class _CapturePanel(VerticalGroup):
 
     # ----- dictionary crack (hashcat preferred, aircrack-ng fallback) --------
 
-    def _crack_note(self, text: str) -> None:
+    def _crack_note(self, text: str, phase: str = "FAILED") -> None:
         """Progress/result line under the actions row (best-effort: pane may close)."""
+        if self._status is not None and self._status.ended is None:
+            self._status.update(phase, text)
+            if self._status.ended is not None and self.app.vault_job_status is self._status:
+                self.app.notify(self._status.display(), title="Vault job",
+                                severity="error" if phase in {"FAILED", "FAILED TO SAVE"} else "information")
+        if not self.is_mounted:
+            return
         try:
             self.query_one(".crack-progress", Label).update(text)
         except Exception:
@@ -388,18 +463,27 @@ class _CapturePanel(VerticalGroup):
     @on(Button.Pressed, ".crack")
     def _crack_pressed(self, event: Button.Pressed) -> None:
         event.stop()
+        _crack_log.debug("Crack button pressed panel=%#x", id(self))
         if self._crack_worker is not None and self._crack_worker.is_running:
+            _crack_log.debug("Crack worker cancel requested by button panel=%#x", id(self))
             self._crack_worker.cancel()
             return
-        newest = self._files[0]
-        records = crack_ext.hash_lines(Path(newest.path))
+        newest = self._selected()
+        if newest is None:
+            self._crack_note("Select a capture first.")
+            return
+        path = Path(newest.path)
+        is_packet = path.suffix.lower() in (".cap", ".pcap", ".pcapng")
+        records = [] if is_packet else crack_ext.hash_lines(path)
         tools = crack_ext.detect_tools()
-        if tools.hashcat and records:
-            pending = ("hashcat", tools.hashcat, newest.path, None)
-            detail = f"Tool: hashcat · mode 22000 · {len(records)} hashline(s)"
+        if tools.hashcat and (records or is_packet):
+            pending = ("hashcat", tools.hashcat, newest.path, None, newest)
+            detail = ("Tool: hashcat · mode 22000 · convert selected capture"
+                      if is_packet else
+                      f"Tool: hashcat · mode 22000 · {len(records)} hashline(s)")
         else:
             dashed = bssid_to_dashed(newest.bssid)
-            pcap = crack_ext.sibling_pcap(Path(newest.path), dashed) if tools.aircrack else None
+            pcap = (path if is_packet else crack_ext.sibling_pcap(path, dashed)) if tools.aircrack else None
             if pcap is None:
                 if not tools.hashcat and not tools.aircrack:
                     self._crack_note("No cracker installed. Install one, then retry: "
@@ -409,9 +493,9 @@ class _CapturePanel(VerticalGroup):
                 else:
                     self._crack_note("hashcat not found and no .pcap sibling for aircrack-ng.")
                 return
-            pending = ("aircrack", tools.aircrack, newest.path, str(pcap))
+            pending = ("aircrack", tools.aircrack, newest.path, str(pcap), newest)
             detail = f"Tool: aircrack-ng · {pcap.name}"
-        default = next((h for h in crack_ext.WORDLIST_HINTS if Path(h).is_file()), "")
+        default = str(crack_ext.find_wordlist() or "")  # shared dictionary default
         self._crack_pending = pending
         self.app.push_screen(
             CrackModal(Path(newest.path).name, detail, default, can_start=True),
@@ -421,14 +505,28 @@ class _CapturePanel(VerticalGroup):
         """Wordlist picked (None = cancelled): launch the crack worker."""
         if not wordlist or self._crack_pending is None:
             return
-        tool, _, _, _ = self._crack_pending
+        if (self._crack_worker is not None and
+                self._crack_worker.state in (WorkerState.PENDING, WorkerState.RUNNING)):
+            _crack_log.debug("Ignoring duplicate Crack modal result panel=%#x", id(self))
+            return
+        tool, _, _, _, _ = self._crack_pending
         self._crack_tool = tool
-        try:
-            self.query_one(".crack", Button).disabled = True
-        except Exception:
-            pass
-        self._crack_note(f"Starting {tool}…")
-        self._crack_worker = self.run_worker(self._run_crack(wordlist), exclusive=True)
+        self._status = VaultJobStatus(Path(self._crack_pending[2]).name, tool)
+        self.app.vault_job_status = self._status
+        self._crack_note(f"Starting {tool}…", "QUEUED")
+        self._crack_worker = self.app.run_worker(self._run_crack(wordlist), group="vault-crack")
+        _crack_log.debug("Crack worker created panel=%#x worker=%#x group=%s",
+                         id(self), id(self._crack_worker), self._crack_worker.group)
+
+    def on_unmount(self) -> None:
+        _crack_log.debug("Capture panel unmount panel=%#x worker=%s",
+                         id(self), self._crack_worker is not None)
+
+    @on(Worker.StateChanged)
+    def _crack_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        if event.worker is self._crack_worker or event.worker.group == "vault-crack":
+            _crack_log.debug("Crack worker %s panel=%#x worker=%#x",
+                             event.state.name, id(self), id(event.worker))
 
     def _crack_tick(self, prog) -> None:
         """One parsed status line from the child: refresh the progress line."""
@@ -440,62 +538,129 @@ class _CapturePanel(VerticalGroup):
         if prog.speed:
             text += f" · {prog.speed}"
         text += " - press Crack to stop"
-        self._crack_note(text)
+        self._crack_note(text, "RUNNING")
 
     async def _run_crack(self, wordlist: str) -> None:
         """Drive the child to completion, then attach any recovered PSK to VAULT."""
         pending = self._crack_pending
         assert pending is not None
-        tool, binary, hash_path, pcap = pending
+        tool, binary, hash_path, pcap, newest = pending
         hashfile = Path(hash_path)
-        newest = self._files[0]
         kind = "HS" if newest.type == CaptureType.HS else "PMKID"
         psk: Optional[str] = None
         tmp_hashfile: Optional[Path] = None
+        workspace = None
+        actual_ssid = newest.ssid
         try:
             if tool == "hashcat":
-                records = crack_ext.extract_records(hashfile, kind)
-                if not records:
-                    self._crack_note("No WPA handshake/PMKID hash lines in this file.")
+                workspace = TemporaryDirectory(prefix="airscope-crack-")
+                work = Path(workspace.name)
+                source_path = hashfile
+                if hashfile.suffix.lower() in (".cap", ".pcap", ".pcapng"):
+                    source_path = work / "converted.hc22000"
+                    self._crack_note("Reading packet capture", "CONVERTING")
+                    code, _ = await crack_ext.run_capture_output([
+                        "hcxpcapngtool", "-o", str(source_path), str(hashfile)
+                    ])
+                    if code != 0:
+                        self._status.exit_code = code
+                        self._crack_note(f"Capture conversion failed (exit {code}).")
+                        return
+
+                target_ap = "".join(
+                    c for c in newest.bssid.lower() if c in "0123456789abcdef"
+                )
+                if len(target_ap) != 12:
+                    self._crack_note("Invalid selected AP BSSID.")
                     return
-                tmp_hashfile = crack_ext.write_temp_hashfile(
-                    hashfile.parent, bssid_to_dashed(newest.bssid), records)
-                pot = crack_ext.potfile_path(hashfile.parent)
+
+                matched = []
+                observed_ssids = set()
+                for line in crack_ext.hash_lines(source_path):
+                    parts = line.split("*")
+                    if (len(parts) < 6 or parts[1] not in ("01", "02")
+                            or parts[3].lower() != target_ap):
+                        continue
+                    try:
+                        on_air = bytes.fromhex(parts[5]).decode("utf-8")
+                    except (ValueError, UnicodeDecodeError):
+                        continue
+                    matched.append(line)
+                    observed_ssids.add(on_air)
+
+                records = list(dict.fromkeys(matched))
+                if not records:
+                    self._crack_note("No WPA records matching the selected AP in this capture.")
+                    return
+                if len(observed_ssids) != 1:
+                    self._crack_note("Ambiguous SSIDs for selected AP; refusing result association.")
+                    return
+                actual_ssid = observed_ssids.pop()
+                tmp_hashfile = work / "target.hc22000"
+                tmp_hashfile.write_text("\n".join(records) + "\n", encoding="utf-8")
+                pot = work / "target.pot"
                 cmd = crack_ext.build_hashcat_cmd(binary, tmp_hashfile, Path(wordlist), pot)
-                await crack_ext.run_crack(cmd, tool, on_progress=self._crack_tick)
-                _, show = await crack_ext.run_capture_output(
-                    crack_ext.build_hashcat_show(binary, tmp_hashfile, pot))
-                psk = crack_ext.parse_hashcat_show(show, records, newest.ssid)
+                self._crack_note("Processing", "RUNNING")
+                run = await crack_ext.run_crack(
+                    cmd, tool, on_progress=self._crack_tick
+                )
+                self._status.exit_code = run.exit_code
+                if run.exit_code not in (0, 1):
+                    self._crack_note(f"Hashcat failed (exit {run.exit_code}).")
+                    return
+
+                show_code, show = await crack_ext.run_capture_output(
+                    crack_ext.build_hashcat_show(binary, tmp_hashfile, pot)
+                )
+                if show_code not in (0, 1):
+                    self._status.exit_code = show_code
+                    self._crack_note(f"Hashcat --show failed (exit {show_code}).")
+                    return
+
+                psk = crack_ext.parse_hashcat_show(
+                    show, records, actual_ssid
+                )
+                if not psk and run.exit_code == 0:
+                    self._crack_note(
+                        "Hashcat reports a recovered key, but Airscope "
+                        "could not parse its --show output."
+                    )
+                    return
             else:
-                keyfile = hashfile.parent / ".airscope-aircrack.key"
-                cmd = crack_ext.build_aircrack_cmd(binary, Path(str(pcap)), Path(wordlist), keyfile)
-                run = await crack_ext.run_crack(cmd, tool, on_progress=self._crack_tick)
-                psk = crack_ext.parse_aircrack_key(run.output, keyfile)
-                try:
-                    keyfile.unlink(missing_ok=True)
-                except OSError:
-                    pass
+                with TemporaryDirectory(prefix="airscope-job-") as directory:
+                    keyfile = Path(directory) / ".airscope-aircrack.key"
+                    cmd = crack_ext.build_aircrack_cmd(
+                        binary, Path(str(pcap)), Path(wordlist), keyfile
+                    )
+                    self._crack_note("Processing", "RUNNING")
+                    run = await crack_ext.run_crack(cmd, tool, on_progress=self._crack_tick)
+                    self._status.exit_code = run.exit_code
+                    psk = crack_ext.parse_aircrack_key(run.output, keyfile)
             if psk:
-                self.app.vault.save_cracked_psk(newest.bssid, newest.ssid, psk, tool)
-                self._crack_note(f"✓ Password recovered: {psk}")
-                self.notify(f"Cracked PSK for {newest.ssid or newest.bssid}: {psk}",
-                            title="Password cracked")
+                try:
+                    saved = self.app.vault.save_cracked_psk(newest.bssid, actual_ssid, psk, tool)
+                except OSError:
+                    saved = None
+                if saved is None:
+                    self._crack_note("Vault could not verify the saved credential.", "FAILED TO SAVE")
+                    return
+                self._crack_note("Saved and verified in Vault.", "RECOVERED")
                 self.post_message(VaultItemView.CapturesChanged())
             else:
-                self._crack_note("Finished - no match found in wordlist.")
+                self._crack_note("Finished - no match found in wordlist.", "NO MATCH")
         except asyncio.CancelledError:
-            self._crack_note("Stopped.")
+            self._crack_note("Stopped.", "CANCELLED")
             raise
+        except Exception as exc:
+            self._crack_note(f"Crack failed: {type(exc).__name__}")
         finally:
             if tmp_hashfile is not None:
                 try:
                     tmp_hashfile.unlink(missing_ok=True)
                 except OSError:
                     pass
-            try:
-                self.query_one(".crack", Button).disabled = False
-            except Exception:
-                pass
+            if workspace is not None:
+                workspace.cleanup()
             self._crack_worker = None
 
 
@@ -508,6 +673,7 @@ class VaultItemView(Vertical):
     DEFAULT_CSS = """
     VaultItemView { height: 1fr; padding: 0 1; }
     VaultItemView #vault-item-title { height: auto; margin-bottom: 1; }
+    VaultItemView #vault-delete-network { width: auto; margin-bottom: 1; }
     VaultItemView #vault-item-empty { color: $text-muted; }
     """
 
@@ -520,12 +686,15 @@ class VaultItemView(Vertical):
     def load(self, bssid: str, ssid: Optional[str], captures: List[PersistedCapture],
              *, empty_vault: bool = False) -> None:
         """Show one AP's captures (empty bssid clears the pane)."""
+        empty_message_changed = not bssid and empty_vault != getattr(self, "_empty_vault", False)
         self._empty_vault = empty_vault
         state = (bssid, ssid, tuple(captures))
-        if state == self._state:
-            self.refresh(recompose=True)  # identical value: reactive won't refire
-        else:
+        if state != self._state:
             self._state = state
+        elif empty_message_changed:
+            self.refresh(recompose=True)
+        else:
+            _crack_log.debug("Vault detail unchanged; preserving mounted capture panels")
 
     def compose(self) -> ComposeResult:
         bssid, ssid, captures = self._state
@@ -534,10 +703,39 @@ class VaultItemView(Vertical):
             yield Label(msg, id="vault-item-empty")
             return
         yield Label(Text.from_markup(self._title_markup(bssid, ssid)), id="vault-item-title")
+        yield Button("Delete All Network Captures", "error", id="vault-delete-network")
         for title, kinds in _PANELS:
             group = [c for c in captures if c.type in kinds]
             if group:
                 yield _CapturePanel(title, list(group), show_consolidate=CaptureType.HS in kinds)
+
+    @on(Button.Pressed, "#vault-delete-network")
+    def _delete_network_pressed(self, event: Button.Pressed) -> None:
+        event.stop()
+        bssid, ssid, _ = self._state
+        if not bssid:
+            return
+        files = self.app.vault.network_capture_paths(bssid)
+        if not files:
+            self.notify("No indexed capture files remain", severity="warning")
+            return
+        name = ssid or "(hidden network)"
+        prompt = (f"Permanently delete [bold]{len(files)} file(s)[/] for network\n"
+                  f"[bold]{escape(name)}[/]\nBSSID: {escape(bssid)}\n\n"
+                  "This includes all indexed captures for this BSSID and cannot be undone.")
+        def after(confirmed: bool | None) -> None:
+            if not confirmed:
+                return
+            try:
+                removed = self.app.vault.delete_network_captures(bssid)
+            except (OSError, ValueError) as exc:
+                self.notify(f"NETWORK DELETE FAILED: {exc}", severity="error", timeout=18)
+                self.post_message(VaultItemView.CapturesChanged())
+                return
+            self.notify(f"Removed {removed} capture file(s) for {name}",
+                        title="Network captures deleted", timeout=15)
+            self.post_message(VaultItemView.CapturesChanged())
+        self.app.push_screen(ConfirmModal(prompt), after)
 
     def _title_markup(self, bssid: str, ssid: Optional[str]) -> str:
         name = ssid or "‹hidden›"

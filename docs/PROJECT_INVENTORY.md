@@ -1,9 +1,9 @@
-# PROJECT INVENTORY - airscope v0.3.8
+# PROJECT INVENTORY - airscope v0.3.9
 
 ## Overview
 
-**Project**: airoscpe  
-**Version**: 0.3.8  
+**Project**: airscope  
+**Version**: 0.3.9  
 **License**: GPL-2.0-only  
 **Language**: Python >= 3.11  
 **Platform**: Linux, Windows (via WSL2), macOS (Intel native + Lima VM for EvilTwin; Apple Silicon native)  
@@ -11,7 +11,7 @@
 
 ### Key Differentiators
 
-- **No kernel drivers required**: Uses libusb to communicate directly with USB Wi-Fi adapters in userspace
+- **No kernel drivers required on the userspace path**: Uses libusb to communicate directly with USB Wi-Fi adapters in userspace. The validated Raspberry Pi 5 capture path instead uses a kernel-monitor backend (a bound kernel driver + a DKMS-patched 88XXau module) — see DRIVER_INSTALL.md.
 - **Pure Python implementation**: 802.11 stack, DHCP server, HTTP captive portal all written in Python
 - **Cross-platform**: Single codebase runs on Linux, Windows (WSL2), and macOS
 - **No external dependencies**: No hostapd, dnsmasq, reaver, or aircrack-ng subprocesses
@@ -279,7 +279,7 @@ airscope uses **zero external subprocesses** for its attacks. All functionality 
 
 - ✅ No `aireplay-ng`, `aireplay`, or `iw` shell-outs
 - ✅ No `hostapd`, `dnsmasq`, `reaver` subprocesses
-- ❌ No kernel module loading (`modprobe`/`airmon-ng`)
+- ❌ No kernel module loading on the userspace path (`modprobe`/`airmon-ng`); the validated Raspberry Pi 5 uses a kernel-monitor backend
 
 **Exception**: Web dashboard spawns uvicorn (Python HTTP server) as a library call, not a separate process.
 
@@ -302,6 +302,6 @@ airscope uses **zero external subprocesses** for its attacks. All functionality 
 ## Notes
 
 1. **Chip Discovery**: Drivers under `src/airscope/chips/` are discovered dynamically via pkgutil at runtime
-2. **Version Source**: `__version__ = "0.3.8"` in `src/airscope/__init__.py` is the single source of truth (read by hatchling at build time)
+2. **Version Source**: `__version__ = "0.3.9"` in `src/airscope/__init__.py` is the single source of truth (read by hatchling at build time)
 3. **No `ruff format`**: The project disables formatting to preserve hand-formatted style; use lint-only
 4. **Hardware Risk**: Register/firmware writes can brick devices; never touch EFUSE/EEPROM fuses

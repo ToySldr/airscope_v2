@@ -283,7 +283,7 @@ The pitch is short: **Wi-Fi auditing doesn't have to be Linux-only, kernel-depen
 glued together with shell scripts — and I can show you 3,008 tests and a binary for your
 OS as evidence.**
 
-- Repo: https://github.com/udhaybhat00/airscope
+- Repo: https://github.com/ToySldr/airscope_v2
 - Downloads: the landing page, or the Releases tab
 - Hardware matrix: `docs/SUPPORTED-HARDWARE.md` (grades, per-card notes, all of it)
 - The ACK obsession, if you want the deep cut: `docs/ACKS.md`

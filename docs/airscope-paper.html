@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>airscope: Kernel-Independent Wi-Fi Security Auditing in Pure Python</title>
+<title>airscope: Userspace-First Wi-Fi Security Auditing in Pure Python</title>
 <style>
   @page { size: A4; margin: 20mm 18mm 20mm 18mm; }
   * { box-sizing: border-box; }
@@ -70,14 +70,14 @@
     <span><b>Accepted:</b> 26 September 2026</span>
     <span><b>Published:</b> 6 October 2026</span>
   </div>
-  <div class="citation">Citation: airscope Project. airscope: Kernel-Independent Wi-Fi Security Auditing in
+  <div class="citation">Citation: airscope Project. airscope: Userspace-First Wi-Fi Security Auditing in
   Pure Python. Preprint 2026, v0.3.8. https://github.com/udhaybhat00/airscope</div>
   <div style="margin-top:6px">Copyright &copy; 2026 by the author. Distributed under the GNU General Public
   License v2.0 (code) &mdash; this document describes software intended exclusively for use on networks
   you own or are explicitly authorized to audit.</div>
 </div>
 
-<h1 class="title">airscope: Kernel-Independent Wi-Fi Security Auditing in Pure Python</h1>
+<h1 class="title">airscope: Userspace-First Wi-Fi Security Auditing in Pure Python</h1>
 
 <div class="authors">udhaybhat00 <sup>1</sup></div>
 <div class="affil"><sup>1</sup> airscope project, Independent Research &middot; Correspondence via
@@ -94,7 +94,7 @@ and <em>mdk3</em>, shuttling results between terminals by hand. This paper prese
 a userspace 802.11 implementation that drives Wi-Fi adapters directly through PyUSB, a complete
 userland access-point stack (frame crafting, DHCP, DNS blackhole, HTTP captive portal) with
 real-time MIC verification of submitted credentials, and a three-layer acknowledgement
-reliability model &mdash; with no kernel modules, no external daemons, and a single codebase
+reliability model &mdash; with no kernel modules on the userspace path, no external daemons, and a single codebase
 running on Linux, Windows and macOS. The implementation comprises 256,364 lines of Python across
 658 source modules, drives 20 chipsets through 25 driver packages, and is validated by 3,008
 mocked-hardware tests plus a five-axis hardware verification rubric (RX, TX, ACKs, port fidelity,
@@ -122,15 +122,14 @@ whose integration layer is the human operator. And it is <b>hostile to newcomers
 such as <em>ioctl SIOCSIWMODE failed: Operation not supported</em> teaches nobody anything.</p>
 
 <p>None of these problems is a property of 802.11 itself. Frame injection is a property of the
-radio's firmware and MAC; it requires no kernel module. A captive-portal access point needs
+radio's firmware and MAC; on the userspace path it needs no kernel module. A captive-portal access point needs
 DHCP, DNS, TCP and HTTP &mdash; protocols whose smallest correct implementations fit in a few
 thousand lines. The monitor-mode ioctl exists because tools chose to live below the network
 stack rather than beside it. airscope moves the entire stack into userspace, in one language,
 in one process:</p>
 
 <ul>
-<li><b>No kernel drivers.</b> Adapters are driven directly from userspace via PyUSB/libusb; the
-radio never needs <em>airmon-ng</em>, <em>modprobe</em>, or a DKMS build on the auditing machine.</li>
+<li><b>No kernel drivers (userspace path).</b> On the original userspace architecture, adapters are driven directly from userspace via PyUSB/libusb, needing no <em>airmon-ng</em>, <em>modprobe</em>, or DKMS build. <em>(The validated Raspberry Pi&nbsp;5 configuration instead defaults to a kernel-monitor backend that captures through the bound kernel driver, where the RTL8812AU uses a DKMS-built patched module — see the project's DRIVER_INSTALL documentation.)</em></li>
 <li><b>No external tools.</b> The 802.11 frame stack, DHCP server, DNS blackhole, HTTP portal,
 handshake parser, PMKID extractor and WPS machinery are all pure Python in one repository &mdash;
 no <em>hostapd</em> subprocess, no <em>dnsmasq</em> configuration, no shell-out to <em>reaver</em>.</li>
@@ -195,7 +194,7 @@ model, three operating systems &mdash; rather than cryptographic novelty.</p>
 
 <table>
 <tr><th>Property</th><th>airscope</th><th>aircrack-ng stack</th><th>airgeddon</th><th>Kismet</th></tr>
-<tr><td>Kernel changes</td><td><b>None</b></td><td>Monitor-mode drivers</td><td>Same as aircrack-ng</td><td>Monitor mode</td></tr>
+<tr><td>Kernel changes</td><td><b>None (userspace path)</b></td><td>Monitor-mode drivers</td><td>Same as aircrack-ng</td><td>Monitor mode</td></tr>
 <tr><td>OS support</td><td><b>Linux + Windows + macOS</b></td><td>Linux only</td><td>Linux only</td><td>Mainly Linux</td></tr>
 <tr><td>External processes</td><td><b>Zero</b></td><td>hostapd, dnsmasq, reaver, ...</td><td>All of them</td><td>External plug-ins</td></tr>
 <tr><td>EvilTwin password check</td><td><b>Real-time MIC verify</b></td><td>Manual export to hashcat</td><td>Manual</td><td>N/A</td></tr>
@@ -408,6 +407,7 @@ of the EvilTwin campaign entirely (&sect;3.3).</p>
 <p>A research claim that ignores its counter-evidence is marketing. The following are the
 tool's real boundaries as of v0.3.8.</p>
 <ol>
+<li><b>Kernel-monitor backend on the validated Raspberry Pi&nbsp;5.</b> The userspace architecture above is the general design; the validated v0.3.9 Pi capture path for the Realtek RTL8812AU/RTL8814AU adapters defaults to a <em>kernel-monitor</em> backend that captures through the bound kernel driver. The RTL8812AU uses a DKMS-built patched module, with a documented kernel-update hazard (an auto-rebuilt unpatched module drops beacons). See the project's DRIVER_INSTALL documentation.</li>
 <li><b>EvilTwin requires Linux</b> (native or WSL2). The userland AP itself is portable Python,
 but the platform gate blocks it on macOS, which does not expose the required interface
 configuration mode to this userspace approach. Every other campaign runs natively there.</li>
@@ -448,7 +448,7 @@ notifications; and (6) an entry-point plugin surface for community campaigns.</p
 <p>airscope demonstrates that the Linux-only, kernel-dependent, multi-process Wi-Fi audit
 workflow is contingent rather than necessary. With a userspace USB transport, a pure-Python
 802.11 and network stack, and a disciplined platform-gate model, the same tool runs on three
-operating systems with zero kernel modifications, zero external daemons, and 3,008 tests
+operating systems with zero kernel modifications on the userspace path, zero external daemons, and 3,008 tests
 proving its behaviour without hardware present. The five-axis hardware rubric shows the
 remaining variance to be attributable &mdash; card by card &mdash; to either port fidelity or
 silicon ceiling, never to guesswork. The limitations of &sect;5 are equally part of the

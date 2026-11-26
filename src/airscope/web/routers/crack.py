@@ -12,7 +12,7 @@ router = APIRouter(prefix="/api", tags=["crack"])
 
 class CrackStart(BaseModel):
     path: str
-    wordlist: str
+    wordlist: str = ""  # optional override; global default otherwise
 
 
 @router.post("/crack", status_code=202)

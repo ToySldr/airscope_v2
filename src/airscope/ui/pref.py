@@ -83,6 +83,18 @@ class CapturesDirSetting(VerticalGroup):
         yield Input(Config.captures_dir, id="captures_dir")
 
 
+class WordlistSetting(VerticalGroup):
+    """Global dictionary preference, blank = automatic RockYou discovery."""
+    DEFAULT_CSS = """WordlistSetting { border: round $primary }"""
+
+    def compose(self) -> ComposeResult:
+        self.border_title = "Default dictionary file"
+        yield Input(value=Config.wordlist_path,
+                    placeholder="/usr/share/wordlists/rockyou.txt",
+                    id="wordlist_path")
+        yield Label("Blank = automatically find RockYou; full absolute path otherwise.")
+
+
 class SaveFooter(Horizontal):
     DEFAULT_CSS = """
     SaveFooter {
@@ -106,7 +118,7 @@ class PreferencesModal(ModalScreen):
     DEFAULT_CSS = """
     PreferencesModal { align: center middle; }
     PreferencesModal #dialog {
-        width: 44; height: auto;
+         width: 74; height: auto;
         max-height: 100%;
         border: thick $primary; background: $surface; padding: 0 2;
     }
@@ -123,6 +135,7 @@ class PreferencesModal(ModalScreen):
             yield ThemeSetting()
             yield SortDelaySetting()
             yield CapturesDirSetting()
+            yield WordlistSetting()  # airscope-global-dictionary-setting
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
             yield SaveFooter()
 
@@ -132,6 +145,26 @@ class PreferencesModal(ModalScreen):
 
     @on(Button.Pressed, "#save")
     def save_pressed(self, event: Event):
+        # Validate before changing ANY persistent preferences.
+        from pathlib import Path
+        raw_wordlist = self.query_one("#wordlist_path", Input).value.strip()
+        if raw_wordlist:
+            target = Path(raw_wordlist).expanduser()
+            if not target.is_absolute() or not target.is_file():
+                self.notify("Dictionary must be an existing file at an absolute path.",
+                            title="Dictionary", severity="error")
+                return
+            try:
+                with target.open("rb") as stream:
+                    stream.read(1)
+            except OSError as exc:
+                self.notify(f"Cannot read dictionary: {exc}",
+                            title="Dictionary", severity="error")
+                return
+            selected_wordlist = str(target.resolve())
+        else:
+            selected_wordlist = ""  # use automatic RockYou discovery
+        Config.wordlist_path = selected_wordlist
         Config.theme = self.app.theme
         Config.captures_dir = self.query_one("#captures_dir", Input).value
         self.app.vault.refresh()

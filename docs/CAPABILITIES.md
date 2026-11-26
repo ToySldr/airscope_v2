@@ -45,7 +45,7 @@ airscope is a Wi-Fi security auditing tool that provides the following capabilit
 - **Purpose**: Start FastAPI web dashboard
 - **Options**:
   - `--host HOST` - Bind host (default: `127.0.0.1`)
-  - `--port PORT` - Port number (default: `8000`)
+  - `--port PORT` - Port number (default: `8765`)
   - `--demo` - Run in demo mode with simulated data
   - `--no-browser` - Suppress automatic browser opening
 
@@ -111,14 +111,16 @@ airscope is a Wi-Fi security auditing tool that provides the following capabilit
 **Purpose**: View captured credentials and cracked passwords
 **Features**:
 - List of captured handshakes/PMKIDs with AP details
-- Cracked PSKs displayed in plaintext
+- Recovered/cracked PSKs are masked (`********`) by default, with a per-row Show/Hide toggle
+- Per-capture and batch "Validate All" validation of handshakes/PMKIDs
+- "Clean Empty": manual, non-destructive quarantine of empty handshake captures (moves to a recoverable folder, never deletes — see RETENTION.md)
 - Export functionality to CSV/netxml formats
 - Clear vault action
 
 ### Preferences Modal
 **Purpose**: User configuration
 **Options**:
-- Theme selection (midnight default)
+- Theme selection (default: airscope-noir)
 - Log level (trace/debug/info/quiet)
 - PBC toggle
 
@@ -192,20 +194,32 @@ airscope is a Wi-Fi security auditing tool that provides the following capabilit
 
 ## Configuration Options
 
-### Config File: `~/.airscope/config.json`
+### Config File: `config.toml`
+
+A TOML file in your OS user-config directory (Linux: `~/.config/airscope/config.toml`), normally written by the Preferences modal (Ctrl+P):
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `theme` | string | `"midnight"` | UI theme name |
-| `log_level` | string/null | `null` | Log verbosity: trace/debug/info/quiet/null |
-| `pbc_enabled` | bool | `true` | Enable PBC toggle in scanner |
-| `channel_hop_interval` | float | `3.0` | Seconds between channel hops |
+| `theme` | string | `"airscope-noir"` | UI theme (`airscope-noir`, `airscope-noir-contrast`, `airscope-green-dark`) |
+| `captures_dir` | string | `"captures"` | Capture output directory |
+| `save_pcap` | bool | `true` | Keep the raw `.pcap` alongside hashes |
+| `wordlist_path` | string | `""` | Global cracking dictionary; blank = bundled RockYou |
+| `log_level` | string | `"info"` | Log verbosity: trace/debug/info/quiet |
+| `scanner_sort` | string | `"signal"` | Scanner sort column: signal/channel/bssid |
+| `scanner_sort_reverse` | bool | `true` | Reverse the scanner sort |
+| `scanner_sort_delay` | float | `2.0` | Seconds between live scanner re-sorts |
+| `silenced_bssids` | list | `[]` | BSSIDs to skip |
 
 ### Environment Variables
+
+On the validated Raspberry Pi 5 the **kernel-monitor backend is the default** for `0bda:8812` and
+`0bda:8813`; the PyUSB path and USB handover below are experimental/unsupported opt-ins.
 
 | Variable | Purpose |
 |----------|---------|
 | `AIRSCOPE_LOG` | Override log level (trace/debug/info/quiet) |
+| `AIRSCOPE_CAPTURE` | Capture backend: `kernel` (default, validated) or `pyusb` (legacy userspace — experimental/unsupported) |
+| `AIRSCOPE_8814_USB_HANDOVER` | Set to `1` to opt into the RTL8814AU USB handover (experimental/unsupported; off by default) |
 | `AIRSCOPE_IN_VM` | Internal: indicates re-exec in VM context |
 | `AIRSCOPE_RTL8188` | For RTL8188eus: "mainline" to use mainline driver |
 | `AIRSCOPE_RTL8812` | For RTL8812AU: "mainline" to use mainline driver |
@@ -220,7 +234,7 @@ airscope is a Wi-Fi security auditing tool that provides the following capabilit
 airscope uses **zero external subprocesses** for core attacks. All implementation is pure Python:
 
 - ✅ No shell-outs to aircrack-ng, aireplay-ng, hostapd, dnsmasq, reaver
-- ✅ No kernel module loading (modprobe/airmon-ng)
+- ✅ No kernel module loading on the userspace path (modprobe/airmon-ng); the validated Raspberry Pi 5 uses a kernel-monitor backend — see DRIVER_INSTALL.md
 - ❌ No external binary dependencies
 
 **Exception**: Web dashboard uses uvicorn HTTP server library call.
@@ -229,7 +243,7 @@ airscope uses **zero external subprocesses** for core attacks. All implementatio
 
 ## Supported Hardware
 
-See [docs/SUPPORTED-HARDWARE.md](../../docs/SUPPORTED-HARDWARE.md) for complete list.
+See [docs/SUPPORTED-HARDWARE.md](SUPPORTED-HARDWARE.md) for complete list.
 
 ### Chipset Support Matrix
 

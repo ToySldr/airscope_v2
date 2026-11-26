@@ -43,7 +43,7 @@
     <p>
       <a
         class="btn"
-        href="https://github.com/udhaybhat00/airscope/blob/main/docs/SUPPORTED-HARDWARE.md"
+        href="https://github.com/ToySldr/airscope_v2/blob/main/docs/SUPPORTED-HARDWARE.md"
         target="_blank"
         rel="noreferrer"
       >Supported hardware docs ↗</a>

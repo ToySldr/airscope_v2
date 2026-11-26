@@ -70,6 +70,14 @@ async def _auto(args) -> int:
         print("airscope: no supported USB adapters found (see docs/SUPPORTED-HARDWARE.md)")
         return 2
 
+    if args.adapter:
+        want = args.adapter.strip().lower().replace("0x", "")
+        devs = [d for d in devs if f"{d.vid:04x}:{d.pid:04x}" == want]
+        if not devs:
+            print(f"airscope: no present adapter matches --adapter {args.adapter}")
+            return 2
+        print(f"airscope: --adapter {args.adapter}: {devs[0].description} only")
+
     array = WlanArray()
     for i, dev in enumerate(devs):
         iface = wlan_iface(dev, name=f"wlan{i}")
@@ -86,7 +94,9 @@ async def _auto(args) -> int:
             print(f"airscope: skip {dev.description}: bring-up failed")
             continue
         array.attach(iface)
-        print(f"airscope: up {dev.description} as wlan{i}")
+        netdev = getattr(iface.driver, "kernel_netdev", None)
+        where = f"on {netdev}" if netdev else f"(internal label wlan{i})"
+        print(f"airscope: up {dev.description} {where}")
     if not array.members:
         print("airscope: no card could be brought up")
         return 2
@@ -98,6 +108,13 @@ async def _auto(args) -> int:
         await _asyncio.sleep(args.scan_secs)
         aps = array.get_access_points()
         print(f"airscope: {len(aps)} APs in range")
+        for member in array.members:
+            rx_stats = getattr(member.driver, "rx_stats", None)
+            if rx_stats is not None:
+                s = rx_stats()
+                print(f"airscope: rx {s['netdev']} ({s['vidpid']}): raw={s['raw']} "
+                      f"parsed={s['parsed']} beacons={s['beacons']} dropped={s['dropped']} "
+                      f"channels={s['channels_seen']}")
 
         if args.list:
             for ap in sorted(aps, key=lambda a: a.bssid):
@@ -352,6 +369,9 @@ def main() -> None:
                         help="With --auto: comma-separated BSSIDs or SSID substrings to attack")
     parser.add_argument("--scan-secs", type=float, default=30.0,
                         help="With --auto: seconds to scan before attacking (default 30)")
+    parser.add_argument("--adapter", default="",
+                        help="With --auto: bring up ONLY the adapter with this VID:PID "
+                             "(e.g. 0bda:8813), for isolated single-adapter tests")
     parser.add_argument("--wps-timeout", type=float, default=300.0)
     parser.add_argument("--pmkid-timeout", type=float, default=120.0)
     parser.add_argument("--hs-timeout", type=float, default=300.0)
@@ -392,6 +412,15 @@ def main() -> None:
         # 60s ceiling so a hung mount fails CI instead of stalling the runner.
         asyncio.run(asyncio.wait_for(_smoke(), timeout=60))
         return
+
+    # Require root for live wireless operations on Linux.
+    if _sys.platform.startswith("linux") and os.geteuid() != 0:
+        print(
+            "\nERROR: Airscope must launch with sudo.\n"
+            "Run: sudo /usr/local/bin/airscope\n",
+            file=_sys.stderr,
+        )
+        _sys.exit(1)
 
     if args.auto:
         import asyncio

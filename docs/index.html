@@ -106,8 +106,8 @@
     <a href="#features">Features</a>
     <a href="#screens">Screens</a>
     <a href="#download">Download</a>
-    <a href="https://github.com/udhaybhat00/airscope#readme">Docs</a>
-    <a href="https://github.com/udhaybhat00/airscope">GitHub</a>
+    <a href="https://github.com/ToySldr/airscope_v2#readme">Docs</a>
+    <a href="https://github.com/ToySldr/airscope_v2">GitHub</a>
   </nav>
 </header>
 
@@ -119,15 +119,13 @@
   3-step EvilTwin — <b>one codebase on Linux, Windows (WSL2) and macOS</b>.</p>
 
   <div class="buttons">
-    <a class="btn primary" href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-macos-universal2">
-      <small>macOS · Apple Silicon + Intel</small>Download .command</a>
-    <a class="btn primary" href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-linux-x64">
-      <small>Linux · x86_64</small>Download binary</a>
-    <a class="btn" href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-linux-arm64">
-      <small>Linux · ARM64</small>Download binary</a>
-    <a class="btn" href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-windows-x64.exe">
-      <small>Windows · x64 (WSL2)</small>Download .exe</a>
+    <a class="btn primary" href="https://github.com/ToySldr/airscope_v2/releases">
+      <small>All platforms &middot; release assets</small>View releases</a>
+    <a class="btn" href="https://github.com/ToySldr/airscope_v2#readme">
+      <small>Linux &middot; Windows (WSL2) &middot; macOS</small>Build from source</a>
   </div>
+  <p style="margin:12px auto 0;max-width:640px;font-size:0.82rem;line-height:1.5;color:var(--warning,#e0a030);opacity:0.95;">
+    <strong>Note:</strong> pre-built v0.3.9 binaries are not published yet. Until release assets are attached, use the <a href="https://github.com/ToySldr/airscope_v2/releases" style="color:inherit;text-decoration:underline;">Releases page</a> or build from source (see below).</p>
 
   <div class="window">
     <div class="chrome"><i></i><i></i><i></i></div>
@@ -166,7 +164,7 @@
     </div>
     <div class="card">
       <h3><span class="dot">●</span> No kernel, no suite</h3>
-      <p>Userspace USB via PyUSB — <b>no kernel drivers, no aircrack-ng, no hostapd</b>.
+      <p>Userspace USB via PyUSB on the original path — <b>no aircrack-ng, no hostapd</b> (the validated Raspberry Pi&nbsp;5 uses a kernel-monitor backend).
       The 802.11 stack, DHCP and captive portal are Python in this repo.</p>
     </div>
   </div>
@@ -187,19 +185,21 @@
 </section>
 
 <section id="download">
-  <h2>Download v0.3.8</h2>
+  <h2>Download v0.3.9</h2>
+  <p style="margin:0 0 14px;font-size:0.9rem;color:var(--warning,#e0a030);">
+    <strong>Release assets are not published yet.</strong> The links below point to the project's <a href="https://github.com/ToySldr/airscope_v2/releases" style="color:inherit;">Releases page</a>; until binaries are attached there, install <em>from source</em> (row below).</p>
   <table class="specs">
-    <tr><td>macOS (universal2)</td><td><a href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-macos-universal2">airscope-macos-universal2</a> · full attacks native; EvilTwin portal is the Linux-only exception</td></tr>
-    <tr><td>Linux x64 / arm64</td><td><a href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-linux-x64">airscope-linux-x64</a> · <a href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-linux-arm64">airscope-linux-arm64</a> · everything</td></tr>
-    <tr><td>Windows x64</td><td><a href="https://github.com/udhaybhat00/airscope/releases/download/v0.3.8/airscope-windows-x64.exe">airscope-windows-x64.exe</a> · auto-runs inside WSL2 with usbipd</td></tr>
+    <tr><td>macOS (universal2)</td><td><a href="https://github.com/ToySldr/airscope_v2/releases">airscope-macos-universal2</a> · full attacks native; EvilTwin portal is the Linux-only exception</td></tr>
+    <tr><td>Linux x64 / arm64</td><td><a href="https://github.com/ToySldr/airscope_v2/releases">airscope-linux-x64</a> · <a href="https://github.com/ToySldr/airscope_v2/releases">airscope-linux-arm64</a> · everything</td></tr>
+    <tr><td>Windows x64</td><td><a href="https://github.com/ToySldr/airscope_v2/releases">airscope-windows-x64.exe</a> · auto-runs inside WSL2 with usbipd</td></tr>
     <tr><td>From source</td><td class="mono">git clone … &amp;&amp; uv sync --group dev &amp;&amp; uv run airscope</td></tr>
-    <tr><td>Supported adapters</td><td><span class="yes">20 chipsets / 25 drivers</span> graded — see <a href="https://github.com/udhaybhat00/airscope/blob/main/docs/SUPPORTED-HARDWARE.md">SUPPORTED-HARDWARE.md</a></td></tr>
+    <tr><td>Supported adapters</td><td><span class="yes">20 chipsets / 25 drivers</span> graded — see <a href="https://github.com/ToySldr/airscope_v2/blob/main/docs/SUPPORTED-HARDWARE.md">SUPPORTED-HARDWARE.md</a></td></tr>
     <tr><td>Tests</td><td><span class="yes">3,008 passing</span>, hardware fully mocked</td></tr>
   </table>
 </section>
 
 <footer>
-  <div>AIRSCOPE · GPL-2.0 · <a href="https://github.com/udhaybhat00/airscope">github.com/udhaybhat00/airscope</a></div>
+  <div>AIRSCOPE · GPL-2.0 · <a href="https://github.com/ToySldr/airscope_v2">github.com/ToySldr/airscope_v2</a></div>
   <p class="disclaimer">For authorized security testing and education only. Attacking networks
   you do not own or have explicit permission to test is illegal.</p>
 </footer>

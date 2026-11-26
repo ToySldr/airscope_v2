@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Dict, Iterator, List, Optional
 
 from airscope.models import CaptureType, PersistedCapture
 from airscope.persist import save
+from airscope.persist.capture_validation import PACKET_SUFFIXES
 from airscope.persist.capture_history import load_capture_index, summarize
 from airscope.persist.common import LEGACY_CAPTURE_RE, bssid_to_dashed, safe_ssid
 from airscope.persist.config import Config
@@ -70,6 +71,8 @@ class Vault:
         own contents (HS/PMKID hashlines). Empty string if unreadable."""
         if capture.value is not None:
             return capture.value
+        if Path(capture.path).suffix.lower() in PACKET_SUFFIXES:
+            return ""
         try:
             return Path(capture.path).read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
@@ -159,7 +162,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.HS, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
         return result
 
     def save_pmkid(self, ap: "AccessPoint", client_mac: str) -> Optional[SaveResult]:
@@ -167,7 +170,7 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.PMKID, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid))
         return result
 
     def save_wep_key(self, ap: "AccessPoint", key: bytes) -> Optional[SaveResult]:
@@ -175,7 +178,8 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.WEP, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=key.hex()))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid,
+                                    value=key.hex()))
         return result
 
     def save_wps_pin(self, ap: "AccessPoint", pin: str, psk: str) -> Optional[SaveResult]:
@@ -183,7 +187,8 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.WPS_PIN, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=psk, pin=pin))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid,
+                                    value=psk, pin=pin))
         return result
 
     def save_wps_pbc(self, ap: "AccessPoint", psk: str) -> Optional[SaveResult]:
@@ -191,15 +196,20 @@ class Vault:
         if result and result.was_new:
             self._index.setdefault(ap.bssid, []).insert(
                 0, PersistedCapture(type=CaptureType.WPS_PBC, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=ap.bssid, value=psk))
+                                    path=str(result.path), bssid=ap.bssid, ssid=ap.ssid,
+                                    value=psk))
         return result
 
     def save_cracked_psk(self, bssid: str, ssid: str | None, psk: str, tool: str) -> Optional[SaveResult]:
+        bssid = bssid.lower()
         result = save.save_cracked_psk(bssid, ssid, psk, tool)
-        if result and result.was_new:
-            self._index.setdefault(bssid, []).insert(
-                0, PersistedCapture(type=CaptureType.CRACKED, timestamp=int(time.time()),
-                                    path=str(result.path), bssid=bssid, value=psk, ssid=ssid))
+        if result is None:
+            return None
+        self.refresh()
+        if not any(c.type == CaptureType.CRACKED and Path(c.path).resolve() == result.path.resolve()
+                   and c.value == psk and (not ssid or c.ssid == ssid)
+                   for c in self.persisted(bssid)):
+            return None
         return result
 
     def has_cracked_psk(self, bssid: str) -> bool:
@@ -216,16 +226,62 @@ class Vault:
 
     # ----- filesystem ops (the screen goes through these, never touches disk) -----
 
-    def delete_capture(self, capture: PersistedCapture) -> None:
-        """Delete a capture's file and drop every cache entry backed by it (an
-        aggregate .hc22000 backs both an HS and a PMKID entry)."""
-        Path(capture.path).unlink(missing_ok=True)
-        for bssid in list(self._index):
-            remaining = [c for c in self._index[bssid] if c.path != capture.path]
-            if remaining:
-                self._index[bssid] = remaining
-            else:
-                del self._index[bssid]
+    def _safe_capture_file(self, file_path: str) -> Path:
+        """Permit deleting only an existing capture file inside configured captures/."""
+        root = Path(Config.captures_dir).resolve()
+        path = Path(file_path).resolve()
+        if not path.is_relative_to(root) or path == root:
+            raise ValueError(f"Refusing to delete a file outside captures/: {file_path}")
+        if not path.is_file():
+            raise FileNotFoundError(f"Capture file missing or not a regular file: {file_path}")
+        return path
+
+    def network_capture_paths(self, bssid: str) -> list[Path]:
+        """Distinct indexed files for one BSSID, including companion hash/PCAP."""
+        return sorted({Path(c.path) for c in self.persisted(bssid)}, key=str)
+
+    def delete_capture(self, capture: PersistedCapture) -> int:
+        """Delete exactly one selected indexed file, verify, then rebuild the cache."""
+        if not any(c.path == capture.path and c.bssid == capture.bssid
+                   for c in self.all_captures()):
+            raise ValueError("Selected capture is no longer indexed; refresh and retry")
+        path = self._safe_capture_file(capture.path)
+        try:
+            path.unlink()  # no missing_ok: silently ignoring missing files hid errors
+            if path.exists():
+                raise OSError(f"Capture still exists after deletion: {path}")
+        finally:
+            self.refresh()  # Reconcile the Vault cache with the real filesystem.
+        return 1
+
+    def delete_network_captures(self, bssid: str) -> int:
+        """Delete all indexed files for one BSSID, never files from other networks.
+
+        Preflight every file before deleting. An OS error mid-way is reported and
+        the cache is refreshed, so the UI can show any remaining files.
+        """
+        paths = self.network_capture_paths(bssid)
+        if not paths:
+            raise ValueError("No indexed files for the selected network")
+        selected_paths = {str(p) for p in paths}
+        shared = [c.path for c in self.all_captures()
+                  if c.bssid != bssid and c.path in selected_paths]
+        if shared:
+            raise ValueError("A capture file is also indexed under another BSSID; "
+                             "network-wide deletion blocked to protect other networks")
+        safe_paths = [self._safe_capture_file(str(path)) for path in paths]
+        removed = 0
+        try:
+            for path in safe_paths:
+                path.unlink()
+                removed += 1
+                if path.exists():
+                    raise OSError(f"File still exists after deletion: {path}")
+        except OSError as exc:
+            raise OSError(f"Removed {removed} of {len(safe_paths)} files before failure: {exc}") from exc
+        finally:
+            self.refresh()
+        return removed
 
     def zip_captures(self, captures: List[PersistedCapture],
                      save_as: Optional[Path] = None) -> Optional[Path]:

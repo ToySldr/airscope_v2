@@ -90,7 +90,7 @@ real-world APs in a US environment.
 Some Realtek cards ship both a DKMS-source port and a mainline port (`AIRSCOPE_<CHIP>=mainline` opts
 into the non-default). Two distinct comparisons:
 
-- **Justify the default** — airscope-dkms vs airscope-mainline, both userland, no kernel driver needed.
+- **Justify the default** — airscope-dkms vs airscope-mainline, both userland, no kernel driver needed on the userspace path (the validated Raspberry Pi 5 uses a kernel-monitor backend).
 - **True Port %** — airscope-<variant> vs the Linux **same** driver; needs that kernel driver installed
   (in-tree Ralink is already present; out-of-tree Realtek DKMS drivers must be installed: source
   versions are in `driver_captures/driver-sources/`). Where the matching driver isn't installed, note

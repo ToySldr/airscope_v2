@@ -1,8 +1,8 @@
-# airoscpe Documentation - Complete Index
+# airscope Documentation - Complete Index
 
 ## Overview
 
-This directory contains the complete technical documentation for **airscope v0.3.8**, a Wi-Fi security auditing tool that runs natively on Linux, Windows (via WSL2), and macOS.
+This directory contains the complete technical documentation for **airscope v0.3.9**, a Wi-Fi security auditing tool that runs natively on Linux, Windows (via WSL2), and macOS.
 
 ## Quick Reference
 
@@ -206,7 +206,7 @@ Control Flow (RX Frame Path, TX Frame Path)
 ## Platform-Specific Notes
 
 ### Linux
-- Native libusb userspace (no kernel drivers)
+- Native libusb userspace on the original path (the validated Raspberry Pi 5 uses a kernel-monitor backend)
 - udev rule required for `/dev/bus/usb` access
 - Full attack support including EvilTwin captive portal
 
@@ -226,8 +226,8 @@ Control Flow (RX Frame Path, TX Frame Path)
 
 ```bash
 # Installation
-git clone https://github.com/udhaybhat00/airscope.git
-cd airscope
+git clone https://github.com/ToySldr/airscope_v2.git
+cd airscope_v2
 uv sync --group dev      # or: pip install -e .
 
 # Running
@@ -281,7 +281,7 @@ uv run ruff check src/
 
 ## Version Information
 
-- **Current version**: 0.3.8
+- **Current version**: 0.3.9
 - **Version source**: `src/airscope/__init__.py`
 - **License**: GPL-2.0-only
 - **Python requirement**: >= 3.11
@@ -300,4 +300,4 @@ uv run ruff check src/
 
 ---
 
-**Last updated**: Generated from source at `/home/toysldr/Projects/airscope`
+**Last updated**: Generated from source (local checkout).

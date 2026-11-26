@@ -2,9 +2,9 @@
 
 ## Overview
 
-This document is the master reference for understanding how airoscpe works. It supersedes all other documentation as the single source of truth.
+This document is the master reference for understanding how airscope works. It supersedes all other documentation as the single source of truth.
 
-**Version**: 0.3.8  
+**Version**: 0.3.9  
 **License**: GPL-2.0-only  
 **Primary Language**: Python >= 3.11  
 **Platform**: Linux (native), Windows (via WSL2), macOS (Intel via Lima VM, Apple Silicon native)
@@ -359,7 +359,7 @@ class Handshake:
 
 airscope orchestrates **no external utilities** for attacks. All implementation is pure Python:
 
-| Action | Traditional Tool | airoscpe Implementation |
+| Action | Traditional Tool | airscope Implementation |
 |--------|------------------|------------------------|
 | USB enumeration | `lsusb`, udevadm | `pyusb` (libusb backend) |
 | Monitor mode | `airmon-ng start wlan0` | Chip firmware configuration via registers |

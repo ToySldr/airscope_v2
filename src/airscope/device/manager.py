@@ -151,8 +151,46 @@ def supported_ids() -> dict[VidPid, Claim]:
     return mapping
 
 
+# Adapters whose kernel driver already does monitor-mode RX. The kernel-monitor backend captures
+# through that bound driver with NO USB detach -- kernel ownership is REQUIRED, not a problem. These
+# default to the kernel backend; AIRSCOPE_CAPTURE=pyusb forces the userspace PyUSB driver (the
+# optional, guarded alternative), AIRSCOPE_CAPTURE=kernel forces the kernel backend everywhere it
+# applies.
+_KERNEL_BACKEND_IDS = {(0x0bda, 0x8812), (0x0bda, 0x8813)}
+# Default for these adapters after live validation (2026-11-23: both captured through the app on the
+# kernel backend, individually and simultaneously, no USB detach). AIRSCOPE_CAPTURE=pyusb opts back
+# into the userspace PyUSB driver (the guarded alternative).
+_KERNEL_BACKEND_DEFAULT = True
+_KERNEL_BACKEND_KEY = "kernel-monitor"
+
+
+def kernel_backend_selected(vid: int, pid: int) -> bool:
+    """Should ``vid:pid`` capture via the kernel-monitor backend (vs the userspace PyUSB driver)?
+
+    Only for the validated Realtek adapters, and only on Linux (``AF_PACKET`` + ``iw``). Honours
+    ``AIRSCOPE_CAPTURE`` (``kernel`` / ``pyusb``); otherwise the per-adapter default."""
+    if not sys.platform.startswith("linux") or (vid, pid) not in _KERNEL_BACKEND_IDS:
+        return False
+    choice = os.environ.get("AIRSCOPE_CAPTURE", "").strip().lower()
+    if choice == "pyusb":
+        return False
+    if choice == "kernel":
+        return True
+    return _KERNEL_BACKEND_DEFAULT
+
+
+def _kernel_backend_claim(vid: int, pid: int) -> Optional[Tuple[type["Driver"], str]]:
+    if not kernel_backend_selected(vid, pid):
+        return None
+    from airscope.chips.kernel_capture import KernelMonitorDriver
+    return KernelMonitorDriver, _KERNEL_BACKEND_KEY
+
+
 def driver_for(vid: int, pid: int) -> Optional[Tuple[type["Driver"], str]]:
     """``(driver class, setup key)`` claiming ``vid:pid``, or None."""
+    kb = _kernel_backend_claim(vid, pid)
+    if kb is not None:
+        return kb
     claim = supported_ids().get((vid, pid))
     if claim is None:
         return None
@@ -173,6 +211,9 @@ def _package_claim(dir_name: str, slot: VidPid) -> Optional[Claim]:
 
 def resolve_driver(vid: int, pid: int, dev: usb.core.Device) -> Optional[Tuple[type["Driver"], str]]:
     """``(driver class, setup key)`` for the live ``dev``."""
+    kb = _kernel_backend_claim(vid, pid)
+    if kb is not None:
+        return kb
     shared = _VIDPID_FAMILIES.get((vid, pid))
     if shared is not None:
         claim = _package_claim(shared.resolve(dev), (vid, pid))
