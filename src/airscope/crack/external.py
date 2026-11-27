@@ -214,6 +214,28 @@ def extract_records(hashfile: Path, kind: str) -> list[str]:
     return [ln for ln in hash_lines(hashfile) if ln.startswith(prefix)]
 
 
+def essid_from_records(records: list[str]) -> Optional[str]:
+    """The ESSID carried inside these hc22000 WPA records, if they agree on one.
+
+    An hc22000 line is ``WPA*TYPE*HASH*APMAC*CLIENTMAC*ESSID_HEX*...`` where field
+    5 is the network name in hex. hashcat's ``--show`` reconstructs a handshake hit
+    from exactly that embedded ESSID, so :func:`parse_hashcat_show` has to match on
+    it, not on a possibly stale/renamed/empty label stored in the vault. Returns the
+    single decoded ESSID when every parseable record agrees, else ``None`` (callers
+    fall back to the stored label).
+    """
+    essids: set[str] = set()
+    for line in records:
+        parts = line.split("*")
+        if len(parts) < 6:
+            continue
+        try:
+            essids.add(bytes.fromhex(parts[5]).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return essids.pop() if len(essids) == 1 else None
+
+
 def write_temp_hashfile(captures_dir: Path, dashed_bssid: str, lines: list[str]) -> Path:
     """Single-AP hashfile for one crack run (any hit in it is ours)."""
     path = captures_dir / f".airscope-crack-{dashed_bssid}.hc22000"
