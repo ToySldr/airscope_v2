@@ -8,7 +8,7 @@ from airscope.persist.config import Config, ConfigError
 _DEFAULTS = {n: getattr(Config, n)
              for n in (
                  "theme", "scanner_sort", "scanner_sort_reverse", "scanner_sort_delay",
-                 "silenced_bssids", "log_level", "captures_dir", "save_pcap")}
+                 "silenced_bssids", "log_level", "captures_dir", "wordlist", "save_pcap")}
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +129,25 @@ def test_is_silenced_is_case_insensitive():
     assert Config.is_silenced("AA:BB:CC:DD:EE:FF") is True
     assert Config.is_silenced("aa:bb:cc:dd:ee:ff") is True
     assert Config.is_silenced("11:22:33:44:55:66") is False
+
+
+def test_wordlist_defaults_to_empty():
+    assert Config.wordlist == ""
+
+
+def test_wordlist_save_load_roundtrip(config_path):
+    Config.wordlist = "/home/aj/wordlists/custom.txt"
+    Config.save()
+    assert "wordlist = '/home/aj/wordlists/custom.txt'" in config_path.read_text("utf-8")
+    Config.wordlist = "x"
+    Config.load()
+    assert Config.wordlist == "/home/aj/wordlists/custom.txt"
+
+
+def test_wordlist_absent_key_keeps_default(config_path):
+    config_path.write_text('theme = "nord"\n')
+    Config.load()
+    assert Config.wordlist == ""
 
 
 def test_scanner_sort_delay_save_load_roundtrip(config_path):

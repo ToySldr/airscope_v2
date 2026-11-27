@@ -17,6 +17,7 @@ class ConfigError(Exception):
 class Config:
     theme: str = "airscope-noir"
     captures_dir: str = "captures"
+    wordlist: str = ""
     save_pcap: bool = True
     log_level: str = "info"
     scanner_sort: str = "signal"
@@ -61,6 +62,10 @@ class Config:
                 # Keep the raw relative path as a last resort; load_capture_index
                 # will simply return {} and airscope shows "no captures".
                 cls.captures_dir = captures_dir_raw
+        # Stored verbatim (absolute path, ~ expansion happens at use site). Empty
+        # string means "auto-detect a rockyou-style list"; a non-empty value is the
+        # user's universal override, honoured everywhere a default wordlist is picked.
+        cls.wordlist = str(data.get("wordlist", cls.wordlist))
         cls.save_pcap = data.get("save_pcap", cls.save_pcap)
         cls.theme = data.get("theme", cls.theme)
         cls.log_level = data.get("log_level", cls.log_level)
@@ -78,6 +83,7 @@ class Config:
     def save(cls) -> None:
         text = (
             f"captures_dir = {_fmt(cls.captures_dir)}\n"
+            f"wordlist = {_fmt(cls.wordlist)}\n"
             f"save_pcap = {_fmt(cls.save_pcap)}\n"
             f"theme = {_fmt(cls.theme)}\n"
             f"log_level = {_fmt(cls.log_level)}\n"
