@@ -476,7 +476,12 @@ class _CapturePanel(VerticalGroup):
                 await crack_ext.run_crack(cmd, tool, on_progress=self._crack_tick)
                 _, show = await crack_ext.run_capture_output(
                     crack_ext.build_hashcat_show(binary, tmp_hashfile, pot))
-                psk = crack_ext.parse_hashcat_show(show, records, newest.ssid)
+                # Match hashcat's reconstructed handshake line on the ESSID embedded
+                # in the capture itself, not the stored vault label: the two can
+                # differ (case, a renamed/hidden SSID, or no label), and a mismatch
+                # silently drops a real hit, showing "no match" for a cracked PSK.
+                actual_ssid = crack_ext.essid_from_records(records) or newest.ssid
+                psk = crack_ext.parse_hashcat_show(show, records, actual_ssid)
             else:
                 keyfile = hashfile.parent / ".airscope-aircrack.key"
                 cmd = crack_ext.build_aircrack_cmd(binary, Path(str(pcap)), Path(wordlist), keyfile)

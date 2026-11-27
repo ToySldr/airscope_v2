@@ -591,9 +591,9 @@ class HeadlessContext:
         records = crack_ext.hash_lines(hashfile)
         if tools.hashcat and records:
             kind = "HS" if cap.type == "HS" else "PMKID"
+            kind_records = crack_ext.extract_records(hashfile, kind)
             tmp = crack_ext.write_temp_hashfile(
-                hashfile.parent, bssid_to_dashed(cap.bssid),
-                crack_ext.extract_records(hashfile, kind))
+                hashfile.parent, bssid_to_dashed(cap.bssid), kind_records)
             try:
                 pot = crack_ext.potfile_path(hashfile.parent)
                 cmd = crack_ext.build_hashcat_cmd(tools.hashcat, tmp, _Path(wordlist), pot)
@@ -604,7 +604,10 @@ class HeadlessContext:
                                            "total": p.total, "speed": p.speed}))
                 _, show = await crack_ext.run_capture_output(
                     crack_ext.build_hashcat_show(tools.hashcat, tmp, pot))
-                return crack_ext.parse_hashcat_show(show, records, cap.ssid)
+                # Derive the ESSID from the capture's own records, not the stored
+                # label, so a cracked handshake is not dropped on a label mismatch.
+                actual_ssid = crack_ext.essid_from_records(kind_records) or cap.ssid
+                return crack_ext.parse_hashcat_show(show, records, actual_ssid)
             finally:
                 try:
                     tmp.unlink(missing_ok=True)

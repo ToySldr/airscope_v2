@@ -168,3 +168,39 @@ def test_resolve_wordlist_none_when_nothing_available(tmp_path, monkeypatch):
     monkeypatch.setattr(Config, "wordlist", "")
     monkeypatch.setattr(ext, "WORDLIST_HINTS", [str(tmp_path / "absent.txt")])
     assert ext.resolve_wordlist() is None
+
+
+# --- ESSID derived from the capture record (not the stored vault label) ---------
+
+def _rec(essid: str, mic: str = "deadbeef", kind: str = "02") -> str:
+    """A WPA*kind* hc22000 record whose field-5 ESSID hex decodes to `essid`."""
+    return (f"WPA*{kind}*{mic}*aabbccddeeff*112233445566"
+            f"*{essid.encode().hex()}*nonce*eapol*02")
+
+
+def test_essid_from_records_single():
+    assert ext.essid_from_records([_rec("TestNet")]) == "TestNet"
+
+
+def test_essid_from_records_handles_colon_and_unicode():
+    assert ext.essid_from_records([_rec("Cafe: Wi-Fi")]) == "Cafe: Wi-Fi"
+
+
+def test_essid_from_records_none_when_disagree_or_empty():
+    assert ext.essid_from_records([]) is None
+    assert ext.essid_from_records([_rec("A"), _rec("B")]) is None
+    assert ext.essid_from_records(["not-a-record", "WPA*02*too*few"]) is None
+
+
+def test_derived_essid_recovers_hit_that_stored_label_would_miss():
+    """Regression: hashcat --show echoes the capture's ESSID; matching on a stale
+    stored label (wrong case here) drops the hit, but the derived ESSID recovers it."""
+    record = _rec("TestNet")
+    # hashcat --show normalized handshake form: {pmkid}:{apmac}:{stamac}:{essid}:{psk}
+    show = ("4fbe218ba6216f4a0611e14d621684f0:aabbccddeeff:112233445566"
+            ":TestNet:hunter2")
+    # Stored label differs in case -> old behaviour returns None (no match shown).
+    assert ext.parse_hashcat_show(show, [record], "testnet") is None
+    # Derived ESSID matches the capture exactly -> PSK recovered.
+    derived = ext.essid_from_records([record])
+    assert ext.parse_hashcat_show(show, [record], derived) == "hunter2"
