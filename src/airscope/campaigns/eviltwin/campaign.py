@@ -12,7 +12,7 @@ from typing import Callable, Iterator, Optional
 
 from airscope.campaigns.campaign import Campaign
 from airscope.campaigns.eviltwin.fake_ap import FakeAP
-from airscope.crack.external import find_wordlist, iter_candidates
+from airscope.crack.external import iter_candidates, resolve_wordlist
 from airscope.crack.handshake import CrackablePair, crackable_pairs, mic_matches
 from airscope.crack.wpa_psk import eapol_mic, kck, pmk, ptk
 from airscope.dot11 import build_deauth, str_to_mac
@@ -161,7 +161,7 @@ class EvilTwinCampaign(Campaign):
         if self._candidates is not None:
             return self._candidates
         seeds = (psk for _bssid, psk in Vault().iter_psk_items())
-        wordlist = find_wordlist()
+        wordlist = resolve_wordlist()
         if wordlist is None and not seeds:
             self.log("[yellow]no dictionary found (install rockyou or save a PSK seed); "
                      "Step 3 cannot verify[/yellow]")
