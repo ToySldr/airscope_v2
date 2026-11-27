@@ -48,3 +48,19 @@ async def test_prefs_no_longer_hosts_consolidate(tmp_path):
         app.push_screen(PreferencesModal())
         await pilot.pause(0)
         assert len(app.screen.query("#consolidate")) == 0
+
+
+@pytest.mark.asyncio
+async def test_save_persists_wordlist(monkeypatch):
+    """Editing the Crack wordlist field and pressing Save updates Config.wordlist."""
+    from textual.widgets import Input
+    monkeypatch.setattr(Config, "save", staticmethod(lambda: None))  # no disk write
+    monkeypatch.setattr(Config, "wordlist", "")
+    app = _Host()
+    async with app.run_test() as pilot:
+        app.push_screen(PreferencesModal())
+        await pilot.pause(0)
+        app.screen.query_one("#wordlist", Input).value = "  /opt/lists/big.txt  "
+        app.screen.query_one("#save", Button).press()
+        await pilot.pause(0)
+    assert Config.wordlist == "/opt/lists/big.txt"   # trimmed, persisted

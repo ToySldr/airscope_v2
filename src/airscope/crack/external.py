@@ -35,12 +35,37 @@ INSTALL_HINTS = {
 
 
 def find_wordlist() -> Optional[Path]:
-    """The first rockyou-style wordlist on disk (``WORDLIST_HINTS``), or None."""
+    """The first rockyou-style wordlist on disk (``WORDLIST_HINTS``), or None.
+
+    Pure auto-detection: it ignores the user's configured override. Callers that
+    want the universal preference honoured should use :func:`resolve_wordlist`.
+    """
     for hint in WORDLIST_HINTS:
         p = Path(hint)
         if p.is_file():
             return p
     return None
+
+
+def resolve_wordlist() -> Optional[Path]:
+    """The wordlist to use by default anywhere airscope auto-picks one.
+
+    Resolution order:
+      1. The user's Ctrl+P preference (``Config.wordlist``), if set and a real file.
+      2. The first auto-detected rockyou-style list (:func:`find_wordlist`).
+      3. ``None`` when nothing is available.
+
+    This is the single source of truth so the preference applies universally. The
+    ``Config`` import is local to keep :mod:`airscope.crack.external` free of an
+    import-time dependency on the persistence layer (and its unit tests Config-free).
+    """
+    from airscope.persist.config import Config
+    pref = (Config.wordlist or "").strip()
+    if pref:
+        p = Path(pref).expanduser()
+        if p.is_file():
+            return p
+    return find_wordlist()
 
 
 def iter_candidates(wordlist: Optional[Path], seeds: Iterable[str] = ()) -> Iterator[str]:

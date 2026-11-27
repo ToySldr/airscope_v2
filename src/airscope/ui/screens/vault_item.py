@@ -27,6 +27,7 @@ from textual.widgets import Button, Input, Label, Select
 from airscope.models import CaptureType, PersistedCapture
 from airscope.crack import external as crack_ext
 from airscope.persist.common import bssid_to_dashed
+from airscope.persist.config import Config
 
 # (title, kinds) per panel, in display order. HS and PMKID share one panel.
 _PANELS: list[tuple[str, tuple[CaptureType, ...]]] = [
@@ -411,7 +412,17 @@ class _CapturePanel(VerticalGroup):
                 return
             pending = ("aircrack", tools.aircrack, newest.path, str(pcap))
             detail = f"Tool: aircrack-ng · {pcap.name}"
-        default = next((h for h in crack_ext.WORDLIST_HINTS if Path(h).is_file()), "")
+        # Prefill the configured wordlist (Ctrl+P preference) verbatim so the user's
+        # choice sticks across cracks instead of reverting to an auto-detected rockyou.
+        # Fall back to auto-detection only when no preference is set. The modal still
+        # validates existence on Start, so a stale configured path surfaces an error
+        # rather than being silently swapped out.
+        configured = (Config.wordlist or "").strip()
+        if configured:
+            default = configured
+        else:
+            auto = crack_ext.find_wordlist()
+            default = str(auto) if auto else ""
         self._crack_pending = pending
         self.app.push_screen(
             CrackModal(Path(newest.path).name, detail, default, can_start=True),

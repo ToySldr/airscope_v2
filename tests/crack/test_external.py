@@ -132,3 +132,39 @@ def test_write_temp_hashfile_round_trips(tmp_path):
 
 def test_install_hint_names_a_tool():
     assert "hashcat" in ext.install_hint()
+
+
+def test_resolve_wordlist_prefers_config_override(tmp_path, monkeypatch):
+    from airscope.persist.config import Config
+    wl = tmp_path / "custom.txt"
+    wl.write_text("pw\n", encoding="utf-8")
+    monkeypatch.setattr(Config, "wordlist", str(wl))
+    # Even if a rockyou-style hint exists on disk, the configured override wins.
+    monkeypatch.setattr(ext, "WORDLIST_HINTS", [str(tmp_path / "rockyou.txt")])
+    (tmp_path / "rockyou.txt").write_text("x\n", encoding="utf-8")
+    assert ext.resolve_wordlist() == wl
+
+
+def test_resolve_wordlist_expands_user(tmp_path, monkeypatch):
+    from airscope.persist.config import Config
+    wl = tmp_path / "home.txt"
+    wl.write_text("pw\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(Config, "wordlist", "~/home.txt")
+    assert ext.resolve_wordlist() == wl
+
+
+def test_resolve_wordlist_falls_back_when_override_missing(tmp_path, monkeypatch):
+    from airscope.persist.config import Config
+    monkeypatch.setattr(Config, "wordlist", str(tmp_path / "does-not-exist.txt"))
+    hint = tmp_path / "rockyou.txt"
+    hint.write_text("x\n", encoding="utf-8")
+    monkeypatch.setattr(ext, "WORDLIST_HINTS", [str(hint)])
+    assert ext.resolve_wordlist() == hint
+
+
+def test_resolve_wordlist_none_when_nothing_available(tmp_path, monkeypatch):
+    from airscope.persist.config import Config
+    monkeypatch.setattr(Config, "wordlist", "")
+    monkeypatch.setattr(ext, "WORDLIST_HINTS", [str(tmp_path / "absent.txt")])
+    assert ext.resolve_wordlist() is None

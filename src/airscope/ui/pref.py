@@ -83,6 +83,16 @@ class CapturesDirSetting(VerticalGroup):
         yield Input(Config.captures_dir, id="captures_dir")
 
 
+class WordlistSetting(VerticalGroup):
+    DEFAULT_CSS = """
+    WordlistSetting { border: round $primary }
+    """
+    def compose(self) -> ComposeResult:
+        self.border_title = "Crack wordlist"
+        yield Input(Config.wordlist, id="wordlist",
+                    placeholder="/usr/share/wordlists/rockyou.txt (blank = auto-detect)")
+
+
 class SaveFooter(Horizontal):
     DEFAULT_CSS = """
     SaveFooter {
@@ -123,6 +133,7 @@ class PreferencesModal(ModalScreen):
             yield ThemeSetting()
             yield SortDelaySetting()
             yield CapturesDirSetting()
+            yield WordlistSetting()
             yield Checkbox("Save .pcap handshakes", value=Config.save_pcap, id="save_pcap")
             yield SaveFooter()
 
@@ -134,6 +145,7 @@ class PreferencesModal(ModalScreen):
     def save_pressed(self, event: Event):
         Config.theme = self.app.theme
         Config.captures_dir = self.query_one("#captures_dir", Input).value
+        Config.wordlist = self.query_one("#wordlist", Input).value.strip()
         self.app.vault.refresh()
         Config.save_pcap = self.query_one("#save_pcap", Checkbox).value
         Config.scanner_sort_delay = float(self.query_one("#sort_delay", Select).value)
